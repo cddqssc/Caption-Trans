@@ -390,20 +390,15 @@ class _HomePageState extends State<HomePage> {
       child: Row(
         children: [
           Container(
-            padding: const EdgeInsets.all(8),
+            padding: const EdgeInsets.all(4),
             decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [
-                  Theme.of(context).colorScheme.primary,
-                  Theme.of(context).colorScheme.tertiary,
-                ],
-              ),
+              color: const Color.fromARGB(255, 186, 186, 186),
               borderRadius: BorderRadius.circular(10),
             ),
-            child: const Icon(
-              Icons.closed_caption_rounded,
-              color: Colors.white,
-              size: 22,
+            child: Image.asset(
+              'assets/images/app_icon.png',
+              width: 32,
+              height: 32,
             ),
           ),
           const SizedBox(width: 12),
