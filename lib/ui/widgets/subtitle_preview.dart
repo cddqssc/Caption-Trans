@@ -68,7 +68,7 @@ class SubtitlePreview extends StatelessWidget {
         if (hasTranslation)
           _ExportButton(
             label: l10n.exportBilingual,
-            icon: Icons.compare_rounded,
+            icon: Icons.share,
             onPressed: onExportBilingual,
             primary: true,
           ),
@@ -92,14 +92,14 @@ class SubtitlePreview extends StatelessWidget {
             Text(
               l10n.noSubtitlesYet,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Colors.white.withValues(alpha: 0.4),
-                  ),
+                color: Colors.white.withValues(alpha: 0.4),
+              ),
             ),
             Text(
               l10n.completeTranscriptionFirst,
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Colors.white.withValues(alpha: 0.25),
-                  ),
+                color: Colors.white.withValues(alpha: 0.25),
+              ),
             ),
           ],
         ),
@@ -115,10 +115,8 @@ class SubtitlePreview extends StatelessWidget {
       child: ListView.separated(
         shrinkWrap: true,
         itemCount: segments!.length,
-        separatorBuilder: (context, index) => Divider(
-          height: 1,
-          color: Colors.white.withValues(alpha: 0.05),
-        ),
+        separatorBuilder: (context, index) =>
+            Divider(height: 1, color: Colors.white.withValues(alpha: 0.05)),
         itemBuilder: (context, index) {
           final seg = segments![index];
           return Padding(
@@ -193,15 +191,10 @@ class _ExportButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (primary) {
-      return ElevatedButton.icon(
+      return FilledButton.icon(
         onPressed: onPressed,
         icon: Icon(icon, size: 16),
         label: Text(label, style: const TextStyle(fontSize: 13)),
-        style: ElevatedButton.styleFrom(
-          backgroundColor: Theme.of(context).colorScheme.primary,
-          foregroundColor: Colors.white,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        ),
       );
     }
 
@@ -211,9 +204,7 @@ class _ExportButton extends StatelessWidget {
       label: Text(label, style: const TextStyle(fontSize: 13)),
       style: OutlinedButton.styleFrom(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        side: BorderSide(
-          color: Colors.white.withValues(alpha: 0.15),
-        ),
+        side: BorderSide(color: Colors.white.withValues(alpha: 0.15)),
       ),
     );
   }
