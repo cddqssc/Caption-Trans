@@ -33,7 +33,8 @@
     }
   },
   "extractingAudio": "Extracting audio from video...",
-  "processingTranscription": "Whisper is processing...",
+  "processingTranscription": "Transcription in progress...",
+  "preprocessingStatus": "Preprocessing: Transcoding and silence detection...",
   "segmentsExtracted": "{count} segments extracted ({lang})",
   "@segmentsExtracted": {
     "placeholders": {

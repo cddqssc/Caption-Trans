@@ -139,11 +139,15 @@ class TranscriptionPanel extends StatelessWidget {
     }
 
     if (state is Transcribing) {
+      final s = state as Transcribing;
+      String label = s.progress > 0
+          ? l10n.processingTranscription
+          : l10n.preprocessingStatus;
       return _buildProgressRow(
         context,
         icon: Icons.mic_rounded,
-        label: l10n.processingTranscription,
-        progress: null,
+        label: label,
+        progress: s.progress > 0 ? s.progress / 100.0 : null,
         color: Colors.purple,
       );
     }
@@ -240,10 +244,7 @@ class TranscriptionPanel extends StatelessWidget {
             width: 80,
             child: Text(
               info.name,
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 13,
-              ),
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
             ),
           ),
           _buildModelSpecColumn(l10n.diskUsage, info.diskUsage),
@@ -267,10 +268,7 @@ class TranscriptionPanel extends StatelessWidget {
               color: Colors.white.withValues(alpha: 0.5),
             ),
           ),
-          Text(
-            value,
-            style: const TextStyle(fontSize: 12),
-          ),
+          Text(value, style: const TextStyle(fontSize: 12)),
         ],
       ),
     );

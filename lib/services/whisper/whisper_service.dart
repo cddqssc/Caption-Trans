@@ -49,6 +49,7 @@ class WhisperService {
   Future<TranscriptionResult> transcribe(
     String mediaPath, {
     String language = 'auto',
+    void Function(int progress)? onProgress,
   }) async {
     if (_currentModel == null) {
       throw StateError('No model loaded. Call loadModel() first.');
@@ -60,6 +61,7 @@ class WhisperService {
       lang: language,
       withTimestamps: true,
       convert: true, // Auto-convert via registered FFmpeg converter
+      onProgress: onProgress,
     );
 
     if (result == null) {

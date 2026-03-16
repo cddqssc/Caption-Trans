@@ -19,10 +19,7 @@ class VideoSelected extends TranscriptionState {
   final String videoPath;
   final String fileName;
 
-  const VideoSelected({
-    required this.videoPath,
-    required this.fileName,
-  });
+  const VideoSelected({required this.videoPath, required this.fileName});
 
   @override
   List<Object?> get props => [videoPath, fileName];
@@ -51,10 +48,7 @@ class AudioExtracting extends TranscriptionState {
   final String videoPath;
   final String fileName;
 
-  const AudioExtracting({
-    required this.videoPath,
-    required this.fileName,
-  });
+  const AudioExtracting({required this.videoPath, required this.fileName});
 
   @override
   List<Object?> get props => [videoPath, fileName];
@@ -65,15 +59,16 @@ class Transcribing extends TranscriptionState {
   final String videoPath;
   final String fileName;
   final String statusMessage;
-
+  final int progress;
   const Transcribing({
     required this.videoPath,
     required this.fileName,
     this.statusMessage = 'Transcribing...',
+    this.progress = 0,
   });
 
   @override
-  List<Object?> get props => [videoPath, fileName, statusMessage];
+  List<Object?> get props => [videoPath, fileName, statusMessage, progress];
 }
 
 /// Transcription completed successfully.

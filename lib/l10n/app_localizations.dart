@@ -257,8 +257,14 @@ abstract class AppLocalizations {
   /// No description provided for @processingTranscription.
   ///
   /// In en, this message translates to:
-  /// **'Whisper is processing...'**
+  /// **'Transcription in progress...'**
   String get processingTranscription;
+
+  /// No description provided for @preprocessingStatus.
+  ///
+  /// In en, this message translates to:
+  /// **'Preprocessing: Transcoding and silence detection...'**
+  String get preprocessingStatus;
 
   /// No description provided for @segmentsExtracted.
   ///

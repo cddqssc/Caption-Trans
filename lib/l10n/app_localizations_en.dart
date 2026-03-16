@@ -89,7 +89,11 @@ class AppLocalizationsEn extends AppLocalizations {
   String get extractingAudio => 'Extracting audio from video...';
 
   @override
-  String get processingTranscription => 'Whisper is processing...';
+  String get processingTranscription => 'Transcription in progress...';
+
+  @override
+  String get preprocessingStatus =>
+      'Preprocessing: Transcoding and silence detection...';
 
   @override
   String segmentsExtracted(int count, String lang) {

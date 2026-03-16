@@ -89,7 +89,10 @@ class AppLocalizationsZh extends AppLocalizations {
   String get extractingAudio => '正在从视频中提取音频...';
 
   @override
-  String get processingTranscription => 'Whisper 正在处理中...';
+  String get processingTranscription => '字幕转录中...';
+
+  @override
+  String get preprocessingStatus => '预处理：转码和静音检测中...';
 
   @override
   String segmentsExtracted(int count, String lang) {

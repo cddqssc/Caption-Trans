@@ -73,6 +73,16 @@ class TranscriptionBloc extends Bloc<TranscriptionEvent, TranscriptionState> {
       final result = await _whisperService.transcribe(
         videoPath, // Pass video file directly
         language: event.language ?? 'auto',
+        onProgress: (progress) {
+          if (!emit.isDone) {
+            emit(Transcribing(
+              videoPath: videoPath,
+              fileName: fileName,
+              statusMessage: 'Transcribing...',
+              progress: progress,
+            ));
+          }
+        },
       );
 
       emit(TranscriptionComplete(
