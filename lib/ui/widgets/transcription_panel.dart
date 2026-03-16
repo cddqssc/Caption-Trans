@@ -97,7 +97,10 @@ class TranscriptionPanel extends StatelessWidget {
       state is AudioExtracting ||
       state is Transcribing;
 
-  bool get _canStart => state is VideoSelected || state is TranscriptionError;
+  bool get _canStart =>
+      state is VideoSelected ||
+      state is TranscriptionError ||
+      state is TranscriptionComplete;
 
   Widget _buildStartButton(BuildContext context, AppLocalizations l10n) {
     if (_isProcessing) {
