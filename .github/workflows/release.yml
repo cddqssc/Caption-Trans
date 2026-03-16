@@ -84,24 +84,24 @@ jobs:
           $APP_NAME = "caption_trans"
           $WORKSPACE = "${{ github.workspace }}"
           
-          Write-Host "Searching for the executable in the build directory..."
-          # Search for the .exe file in the build\windows folder
-          $exeFile = Get-ChildItem -Path "$WORKSPACE\build\windows" -Filter "${APP_NAME}.exe" -Recurse | Select-Object -First 1
+          # 拼接出 Release 文件夹的绝对路径
+          $RELEASE_DIR = Join-Path $WORKSPACE "build\windows\x64\runner\Release"
+          $ZIP_NAME = Join-Path $WORKSPACE "${APP_NAME}-windows-x64.zip"
           
-          if ($exeFile) {
-            $releaseDir = $exeFile.DirectoryName
-            $ZIP_NAME = Join-Path $WORKSPACE "${APP_NAME}-windows-x64.zip"
-            Write-Host "Found executable at: $($exeFile.FullName)"
-            Write-Host "Packaging directory: $releaseDir"
-            
-            Compress-Archive -Path "$releaseDir\*" -DestinationPath "$ZIP_NAME" -Force
-            Write-Host "Successfully created $ZIP_NAME"
-          } else {
-            Write-Host "!!! Error: Could not find ${APP_NAME}.exe anywhere in build\windows !!!"
-            Write-Host "Listing build\windows structure for debugging:"
-            Get-ChildItem -Path "$WORKSPACE\build\windows" -Recurse -Depth 4 | Select-Object FullName
+          Write-Host "Looking for Release directory at: $RELEASE_DIR"
+          
+          # 验证目录是否存在
+          if (!(Test-Path $RELEASE_DIR)) {
+            Write-Error "!!! 找不到 Release 目录 !!!"
+            Write-Host "打印 build\windows 目录结构用于排查："
+            Get-ChildItem -Path "$WORKSPACE\build\windows" -Recurse -Depth 3 | Select-Object FullName
             exit 1
           }
+          
+          Write-Host "Found Release directory. Packaging..."
+          # 将该目录下的所有文件打包到工作区根目录
+          Compress-Archive -Path "$RELEASE_DIR\*" -DestinationPath "$ZIP_NAME" -Force
+          Write-Host "Successfully created $ZIP_NAME"
 
       - name: Upload Windows Artifact
         uses: actions/upload-artifact@v4
