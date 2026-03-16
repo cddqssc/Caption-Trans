@@ -53,8 +53,8 @@ class AppConstants {
       memoryUsage: '~2.0 GB',
       quality: (l) => l.qualitySuperior,
     ),
-    'large': WhisperModelInfo(
-      name: 'large',
+    'large-v3': WhisperModelInfo(
+      name: 'large-v3',
       diskUsage: '~2.9 GB',
       memoryUsage: '~3.9 GB',
       quality: (l) => l.qualityBest,
