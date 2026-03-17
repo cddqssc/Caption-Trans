@@ -25,6 +25,8 @@ class FFmpegWindowsConverter implements WhisperAudioConverter {
     }
 
     // FFmpeg arguments optimized for Whisper.cpp:
+    // -map 0:a:0 : Select first audio stream explicitly
+    // -af aresample=async=1:first_pts=0 : Fill timestamp gaps with silence
     // -ar 16000 : 16kHz sampling rate
     // -ac 1     : Mono channel
     // -c:a pcm_s16le : 16-bit little-endian PCM (WAV)
@@ -32,6 +34,10 @@ class FFmpegWindowsConverter implements WhisperAudioConverter {
       '-y',
       '-i',
       '"${input.path}"',
+      '-map',
+      '0:a:0',
+      '-af',
+      'aresample=async=1:first_pts=0',
       '-ar',
       '16000',
       '-ac',
