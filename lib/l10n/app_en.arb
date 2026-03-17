@@ -116,5 +116,8 @@
     }
   },
   "detect": "Detect",
-  "clickDetectToFetchModels": "Please click \"Detect\" to fetch available models"
+  "clickDetectToFetchModels": "Please click \"Detect\" to fetch available models",
+  "savedProvidersTitle": "Saved Providers",
+  "savedProvidersEmpty": "No saved providers",
+  "savedProvidersHint": "Automatically saved locally after API verification succeeds"
 }

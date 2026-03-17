@@ -215,4 +215,14 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get clickDetectToFetchModels =>
       'Please click \"Detect\" to fetch available models';
+
+  @override
+  String get savedProvidersTitle => 'Saved Providers';
+
+  @override
+  String get savedProvidersEmpty => 'No saved providers';
+
+  @override
+  String get savedProvidersHint =>
+      'Automatically saved locally after API verification succeeds';
 }

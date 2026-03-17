@@ -117,7 +117,6 @@ class TranslationPanel extends StatelessWidget {
                   : (v) {
                       if (v != null) {
                         onLlmProviderChanged(v);
-                        onLlmBaseUrlChanged(defaultLlmBaseUrls[v]!);
                       }
                     },
             ),

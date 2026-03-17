@@ -475,6 +475,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Please click \"Detect\" to fetch available models'**
   String get clickDetectToFetchModels;
+
+  /// No description provided for @savedProvidersTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Saved Providers'**
+  String get savedProvidersTitle;
+
+  /// No description provided for @savedProvidersEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No saved providers'**
+  String get savedProvidersEmpty;
+
+  /// No description provided for @savedProvidersHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Automatically saved locally after API verification succeeds'**
+  String get savedProvidersHint;
 }
 
 class _AppLocalizationsDelegate

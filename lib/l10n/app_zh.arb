@@ -62,5 +62,8 @@
   "noProjects": "暂无历史项目",
   "progressLabel": "进度: {completed} / {total}",
   "detect": "检测",
-  "clickDetectToFetchModels": "请点击“检测”以获取可用模型"
+  "clickDetectToFetchModels": "请点击“检测”以获取可用模型",
+  "savedProvidersTitle": "已保存的服务商",
+  "savedProvidersEmpty": "暂无已保存的服务商",
+  "savedProvidersHint": "API验证成功后自会动保存到本地"
 }

@@ -210,4 +210,13 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get clickDetectToFetchModels => '请点击“检测”以获取可用模型';
+
+  @override
+  String get savedProvidersTitle => '已保存的服务商';
+
+  @override
+  String get savedProvidersEmpty => '暂无已保存的服务商';
+
+  @override
+  String get savedProvidersHint => 'api验证成功后自会动保存到本地';
 }

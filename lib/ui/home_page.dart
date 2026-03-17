@@ -57,6 +57,7 @@ class _HomePageState extends State<HomePage> {
   int _batchSize = 25;
   List<String> _availableModels = [];
   bool _isLoadingModels = false;
+  Map<String, ProviderCredential> _savedProviderCredentials = {};
 
   Project? _activeProject;
 
@@ -67,11 +68,17 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _loadSettings() {
+    final savedCredentials = widget.settingsService.llmProviderCredentials;
+    final provider = widget.settingsService.llmProvider;
+    final savedForProvider = savedCredentials[provider];
+
     setState(() {
-      _apiKey = widget.settingsService.geminiApiKey;
+      _savedProviderCredentials = savedCredentials;
       _targetModel = widget.settingsService.geminiModel;
-      _llmProvider = widget.settingsService.llmProvider;
-      _llmBaseUrl = widget.settingsService.llmBaseUrl;
+      _llmProvider = provider;
+      _llmBaseUrl =
+          savedForProvider?.baseUrl ?? widget.settingsService.llmBaseUrl;
+      _apiKey = savedForProvider?.apiKey ?? widget.settingsService.geminiApiKey;
       _targetLanguage = widget.settingsService.targetLanguage;
       _bilingual = widget.settingsService.bilingual;
       _batchSize = widget.settingsService.batchSize;
@@ -82,7 +89,53 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  Future<void> _fetchModels() async {
+  bool _isModelFetchFailed(List<String> models) {
+    if (models.isEmpty) return true;
+    final first = models.first.toLowerCase();
+    return models.length == 1 &&
+        first.contains('failed') &&
+        first.contains('api key');
+  }
+
+  void _handleProviderChanged(String provider) {
+    final savedCredential = _savedProviderCredentials[provider];
+    final baseUrl =
+        savedCredential?.baseUrl ?? (defaultLlmBaseUrls[provider] ?? '');
+    final apiKey = savedCredential?.apiKey ?? '';
+
+    setState(() {
+      _llmProvider = provider;
+      _llmBaseUrl = baseUrl;
+      _apiKey = apiKey;
+      _targetModel = '';
+      _availableModels = [];
+    });
+
+    widget.settingsService.setLlmProvider(provider);
+    widget.settingsService.setLlmBaseUrl(baseUrl);
+    widget.settingsService.setGeminiApiKey(apiKey);
+  }
+
+  Future<void> _saveProviderCredentialIfNeeded() async {
+    if (_llmProvider.isEmpty || _llmBaseUrl.isEmpty || _apiKey.isEmpty) return;
+
+    final credential = ProviderCredential(
+      baseUrl: _llmBaseUrl.trim(),
+      apiKey: _apiKey.trim(),
+    );
+    await widget.settingsService.saveLlmProviderCredential(
+      _llmProvider,
+      credential,
+    );
+
+    if (mounted) {
+      setState(() {
+        _savedProviderCredentials[_llmProvider] = credential;
+      });
+    }
+  }
+
+  Future<void> _fetchModels({bool saveProviderCredential = false}) async {
     if (_apiKey.isEmpty) return;
 
     setState(() => _isLoadingModels = true);
@@ -97,10 +150,11 @@ class _HomePageState extends State<HomePage> {
           targetLanguage: 'zh', // dummy
         ),
       );
+      final failed = _isModelFetchFailed(models);
 
       if (mounted) {
         setState(() {
-          _availableModels = models;
+          _availableModels = failed ? [] : models;
           if (!_availableModels.contains(_targetModel)) {
             if (_availableModels.isNotEmpty) {
               _targetModel = _availableModels.first;
@@ -108,16 +162,31 @@ class _HomePageState extends State<HomePage> {
           }
           _isLoadingModels = false;
         });
+
+        if (failed) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text(
+                'Failed to fetch models. Check Base URL or API Key.',
+              ),
+              backgroundColor: Colors.red.shade700,
+            ),
+          );
+        } else if (saveProviderCredential) {
+          await _saveProviderCredentialIfNeeded();
+        }
       }
     } catch (e) {
       if (mounted) {
         setState(() {
-          _availableModels = [_targetModel];
+          _availableModels = [];
           _isLoadingModels = false;
         });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to fetch models. Check Base URL or API Key.'),
+            content: const Text(
+              'Failed to fetch models. Check Base URL or API Key.',
+            ),
             backgroundColor: Colors.red.shade700,
           ),
         );
@@ -239,20 +308,15 @@ class _HomePageState extends State<HomePage> {
                             llmProvider: _llmProvider,
                             llmBaseUrl: _llmBaseUrl,
                             onLlmProviderChanged: (provider) {
-                              setState(() {
-                                _llmProvider = provider;
-                                _targetModel = ''; // reset model
-                              });
-                              widget.settingsService.setLlmProvider(provider);
-                              if (_apiKey.isNotEmpty) {
-                                _fetchModels();
-                              }
+                              _handleProviderChanged(provider);
                             },
                             onLlmBaseUrlChanged: (url) {
                               setState(() => _llmBaseUrl = url);
                               widget.settingsService.setLlmBaseUrl(url);
                             },
-                            onCheckModels: () => _fetchModels(),
+                            onCheckModels: () {
+                              _fetchModels(saveProviderCredential: true);
+                            },
                             targetLanguage: _targetLanguage,
                             apiKey: _apiKey,
                             targetModel: _targetModel,
@@ -265,7 +329,6 @@ class _HomePageState extends State<HomePage> {
                             onApiKeyChanged: (key) {
                               setState(() => _apiKey = key);
                               widget.settingsService.setGeminiApiKey(key);
-                              _fetchModels();
                             },
                             onTargetModelChanged: (model) {
                               setState(() => _targetModel = model);
@@ -280,7 +343,8 @@ class _HomePageState extends State<HomePage> {
                               if (transcriptionState is TranscriptionComplete) {
                                 context.read<TranslationBloc>().add(
                                   StartTranslation(
-                                    segments: transcriptionState.result.segments,
+                                    segments:
+                                        transcriptionState.result.segments,
                                     config: TranslationConfig(
                                       providerId: _llmProvider,
                                       apiKey: _apiKey,
@@ -353,7 +417,8 @@ class _HomePageState extends State<HomePage> {
     return BlocConsumer<TranscriptionBloc, TranscriptionState>(
       listener: (context, state) {
         if (state is TranscriptionComplete) {
-          if (_activeProject == null || _activeProject!.name != state.fileName) {
+          if (_activeProject == null ||
+              _activeProject!.name != state.fileName) {
             // Create a new project when transcription finishes initially
             _activeProject = Project(
               id: const Uuid().v4(),
@@ -364,9 +429,7 @@ class _HomePageState extends State<HomePage> {
               transcription: state.result,
               translationConfig: null,
             );
-            context.read<ProjectBloc>().add(
-              AddProject(_activeProject!),
-            );
+            context.read<ProjectBloc>().add(AddProject(_activeProject!));
           } else {
             // Update existing active project if for some reason transcription completes again
             // Should not really happen on normal resume since it bypasses extraction
@@ -380,9 +443,9 @@ class _HomePageState extends State<HomePage> {
           selectedFileName: _getFileName(state),
           onPickVideo: () => _pickVideo(context),
           onClear: state is! TranscriptionInitial
-              ? () => context
-                    .read<TranscriptionBloc>()
-                    .add(const ResetTranscription())
+              ? () => context.read<TranscriptionBloc>().add(
+                  const ResetTranscription(),
+                )
               : null,
         );
       },
@@ -605,6 +668,15 @@ class _HomePageState extends State<HomePage> {
       builder: (_) => SettingsDialog(
         currentLocale: locale,
         onLocaleChanged: widget.onLocaleChanged,
+        providerCredentials: _savedProviderCredentials,
+        onDeleteProviderCredential: (provider) async {
+          await widget.settingsService.deleteLlmProviderCredential(provider);
+          if (!mounted) return;
+
+          setState(() {
+            _savedProviderCredentials.remove(provider);
+          });
+        },
       ),
     );
   }
