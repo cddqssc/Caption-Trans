@@ -218,5 +218,5 @@ class AppLocalizationsZh extends AppLocalizations {
   String get savedProvidersEmpty => '暂无已保存的服务商';
 
   @override
-  String get savedProvidersHint => 'api验证成功后自会动保存到本地';
+  String get savedProvidersHint => 'API验证成功后自会动保存到本地';
 }
