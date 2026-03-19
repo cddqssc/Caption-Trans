@@ -7,6 +7,10 @@ import 'transcription_state.dart';
 
 /// BLoC managing the transcription workflow.
 class TranscriptionBloc extends Bloc<TranscriptionEvent, TranscriptionState> {
+  static final RegExp _ansiEscapePattern = RegExp(
+    r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])',
+  );
+
   final WhisperService _whisperService;
 
   TranscriptionBloc({WhisperService? whisperService})
@@ -97,7 +101,7 @@ class TranscriptionBloc extends Bloc<TranscriptionEvent, TranscriptionState> {
       );
       final result = await _whisperService.transcribeWav(
         wavPath,
-        language: event.language ?? 'auto',
+        language: event.language ?? 'ja',
         onStatus: (status, detail) {
           final TranscribingPhase phase = _phaseFromWorkerStatus(status);
           emitTranscribingState(phase: phase, detail: detail);
@@ -135,7 +139,7 @@ class TranscriptionBloc extends Bloc<TranscriptionEvent, TranscriptionState> {
   }
 
   String? _normalizeLogLine(String line) {
-    final String trimmed = line.trim();
+    final String trimmed = line.replaceAll(_ansiEscapePattern, '').trim();
     if (trimmed.isEmpty) return null;
     // WhisperX/PyTorch logs can be very long; keep status concise in UI.
     return trimmed.length > 140 ? '${trimmed.substring(0, 140)}...' : trimmed;

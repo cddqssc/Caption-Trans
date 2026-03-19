@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
+import contextlib
 import json
+import re
 import sys
 import traceback
 import wave
@@ -11,11 +13,13 @@ import whisperx
 
 
 SAMPLE_RATE = 16000
+ANSI_ESCAPE_RE = re.compile(r"\x1B[@-_][0-?]*[ -/]*[@-~]")
+JSON_STDOUT = sys.stdout
 
 
 def emit(message: Dict[str, Any]) -> None:
-    sys.stdout.write(json.dumps(message, ensure_ascii=False) + "\n")
-    sys.stdout.flush()
+    JSON_STDOUT.write(json.dumps(message, ensure_ascii=False) + "\n")
+    JSON_STDOUT.flush()
 
 
 def emit_progress(request_id: str, progress: int) -> None:
@@ -37,6 +41,62 @@ def emit_status(request_id: str, status: str, detail: Optional[str] = None) -> N
     if detail:
         payload["detail"] = detail
     emit(payload)
+
+
+def emit_log(request_id: str, line: str) -> None:
+    emit(
+        {
+            "type": "log",
+            "id": request_id,
+            "line": line,
+        }
+    )
+
+
+class ProgressLogStream:
+    def __init__(self, request_id: str) -> None:
+        self._request_id = request_id
+        self._buffer = ""
+        self._last_line: Optional[str] = None
+
+    def write(self, data: Any) -> int:
+        text = str(data)
+        if not text:
+            return 0
+        self._buffer += text
+        self._drain()
+        return len(text)
+
+    def flush(self) -> None:
+        if not self._buffer:
+            return
+        self._emit_line(self._buffer)
+        self._buffer = ""
+
+    def isatty(self) -> bool:
+        return False
+
+    @property
+    def encoding(self) -> str:
+        return "utf-8"
+
+    def _drain(self) -> None:
+        start = 0
+        for index, ch in enumerate(self._buffer):
+            if ch == "\r" or ch == "\n":
+                part = self._buffer[start:index]
+                self._emit_line(part)
+                start = index + 1
+        self._buffer = self._buffer[start:]
+
+    def _emit_line(self, raw: str) -> None:
+        line = ANSI_ESCAPE_RE.sub("", raw).strip()
+        if not line:
+            return
+        if line == self._last_line:
+            return
+        self._last_line = line
+        emit_log(self._request_id, line)
 
 
 def to_float(value: Any, default: float = 0.0) -> float:
@@ -151,21 +211,31 @@ class WhisperXWorker:
 
         emit_status(request_id, "preparing_model")
         emit_progress(request_id, 20)
-        model = self.get_model(
-            model_name=model_name,
-            device=device,
-            compute_type=compute_type,
-            language=language,
-        )
+        model_logs = ProgressLogStream(request_id)
+        with contextlib.redirect_stdout(model_logs), contextlib.redirect_stderr(
+            model_logs
+        ):
+            model = self.get_model(
+                model_name=model_name,
+                device=device,
+                compute_type=compute_type,
+                language=language,
+            )
+        model_logs.flush()
 
         emit_status(request_id, "transcribing")
         emit_progress(request_id, 35)
-        result = model.transcribe(
-            audio,
-            batch_size=batch_size,
-            print_progress=False,
-            verbose=False,
-        )
+        transcribe_logs = ProgressLogStream(request_id)
+        with contextlib.redirect_stdout(
+            transcribe_logs
+        ), contextlib.redirect_stderr(transcribe_logs):
+            result = model.transcribe(
+                audio,
+                batch_size=batch_size,
+                print_progress=True,
+                verbose=False,
+            )
+        transcribe_logs.flush()
 
         detected_language = str(result.get("language") or language or "unknown")
         normalized_segments = normalize_segments(result.get("segments"))
@@ -174,15 +244,20 @@ class WhisperXWorker:
             emit_status(request_id, "aligning")
             emit_progress(request_id, 72)
             align_model, align_metadata = self.get_align_model(detected_language, device)
-            aligned = whisperx.align(
-                result["segments"],
-                align_model,
-                align_metadata,
-                audio,
-                device,
-                return_char_alignments=False,
-                print_progress=False,
-            )
+            align_logs = ProgressLogStream(request_id)
+            with contextlib.redirect_stdout(
+                align_logs
+            ), contextlib.redirect_stderr(align_logs):
+                aligned = whisperx.align(
+                    result["segments"],
+                    align_model,
+                    align_metadata,
+                    audio,
+                    device,
+                    return_char_alignments=False,
+                    print_progress=True,
+                )
+            align_logs.flush()
             detected_language = str(aligned.get("language") or detected_language)
             normalized_segments = normalize_segments(aligned.get("segments"))
 

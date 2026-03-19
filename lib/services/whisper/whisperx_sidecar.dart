@@ -126,6 +126,12 @@ class WhisperXSidecar {
       }
       message = decoded;
     } catch (_) {
+      // Some Python libraries write plain text to stdout.
+      final String? id = _activeRequestForLogs;
+      if (id != null) {
+        final _PendingRequest? pending = _pending[id];
+        pending?.onLog?.call(line);
+      }
       return;
     }
 
@@ -156,6 +162,14 @@ class WhisperXSidecar {
       if (status.isNotEmpty) {
         final String? detail = message['detail'] as String?;
         pending.onStatus?.call(status, detail);
+      }
+      return;
+    }
+
+    if (type == 'log') {
+      final String logLine = (message['line'] as String?)?.trim() ?? '';
+      if (logLine.isNotEmpty) {
+        pending.onLog?.call(logLine);
       }
       return;
     }
