@@ -22,7 +22,7 @@ class TranslationConfig extends Equatable {
     this.model,
     required this.sourceLanguage,
     required this.targetLanguage,
-    this.batchSize = 25,
+    this.batchSize = 15,
     this.contextOverlap = 3,
   });
 
@@ -56,7 +56,7 @@ class TranslationConfig extends Equatable {
       model: json['model'] as String?,
       sourceLanguage: json['sourceLanguage'] as String,
       targetLanguage: json['targetLanguage'] as String,
-      batchSize: json['batchSize'] as int? ?? 25,
+      batchSize: json['batchSize'] as int? ?? 15,
       contextOverlap: json['contextOverlap'] as int? ?? 3,
     );
   }
@@ -76,13 +76,13 @@ class TranslationConfig extends Equatable {
 
   @override
   List<Object?> get props => [
-        providerId,
-        apiKey,
-        baseUrl,
-        model,
-        sourceLanguage,
-        targetLanguage,
-        batchSize,
-        contextOverlap,
-      ];
+    providerId,
+    apiKey,
+    baseUrl,
+    model,
+    sourceLanguage,
+    targetLanguage,
+    batchSize,
+    contextOverlap,
+  ];
 }

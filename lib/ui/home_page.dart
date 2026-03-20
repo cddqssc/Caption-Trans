@@ -55,7 +55,7 @@ class _HomePageState extends State<HomePage> {
   String _llmBaseUrl =
       'https://generativelanguage.googleapis.com/v1beta/openai';
   bool _bilingual = true;
-  int _batchSize = 25;
+  int _batchSize = 15;
   List<String> _availableModels = [];
   bool _isLoadingModels = false;
   Map<String, ProviderCredential> _savedProviderCredentials = {};

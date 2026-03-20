@@ -1,27 +1,33 @@
-import 'package:openai_dart/openai_dart.dart';
+import 'dart:convert';
+
+import 'package:http/http.dart' as http;
+
 import 'translation_provider.dart';
 
-/// LLM implementation of [TranslationProvider] using openai_dart.
+/// LLM implementation of [TranslationProvider] using the standard OpenAI API.
 class LlmProvider implements TranslationProvider {
+  static const _defaultBaseUrl = 'https://api.openai.com/v1';
+  static const _defaultModel = 'gpt-4o';
+
   final String providerId;
+  final http.Client Function() _clientFactory;
+
   String? _apiKey;
   String? _baseUrl;
-  OpenAIClient? _client;
+  http.Client? _httpClient;
 
-  LlmProvider({required this.providerId});
+  LlmProvider({required this.providerId, http.Client Function()? clientFactory})
+    : _clientFactory = clientFactory ?? http.Client.new;
 
   @override
   String get name => providerId;
 
-  void _ensureModel(String apiKey, String? baseUrl) {
-    if (_apiKey != apiKey || _baseUrl != baseUrl || _client == null) {
+  void _ensureClient(String apiKey, String? baseUrl) {
+    if (_apiKey != apiKey || _baseUrl != baseUrl || _httpClient == null) {
       _apiKey = apiKey;
       _baseUrl = baseUrl;
-      _client?.close();
-      _client = OpenAIClient.withApiKey(
-        apiKey,
-        baseUrl: (baseUrl != null && baseUrl.isNotEmpty) ? baseUrl : null,
-      );
+      _httpClient?.close();
+      _httpClient = _clientFactory();
     }
   }
 
@@ -40,7 +46,6 @@ class LlmProvider implements TranslationProvider {
     if (_apiKey == null) {
       throw StateError('API key not configured. Call validateApiKey first.');
     }
-    _ensureModel(_apiKey!, _baseUrl);
 
     final prompt = _buildTranslationPrompt(
       texts: texts,
@@ -53,21 +58,21 @@ class LlmProvider implements TranslationProvider {
 
     onProgress?.call(0, texts.length);
 
-    final responseFuture = _client!.chat.completions.create(
-      ChatCompletionCreateRequest(
-        model: model ?? 'gpt-4o',
-        messages: [ChatMessage.user(prompt)],
-      ),
+    final response = await _createChatCompletion(
+      apiKey: _apiKey!,
+      baseUrl: _baseUrl,
+      model: model ?? _defaultModel,
+      prompt: prompt,
+      abortTrigger: abortTrigger,
     );
-    final response = await _awaitWithAbort(responseFuture, abortTrigger);
-
-    final responseText = response.text ?? '';
 
     onProgress?.call(texts.length, texts.length);
 
-    final finishMessage = response.firstChoice?.finishReason;
-
-    return _parseTranslationResponse(responseText, texts.length, finishMessage);
+    return _parseTranslationResponse(
+      response.text ?? '',
+      texts.length,
+      response.finishReason,
+    );
   }
 
   @override
@@ -81,7 +86,7 @@ class LlmProvider implements TranslationProvider {
     if (_apiKey == null) {
       throw StateError('API key not configured. Call validateApiKey first.');
     }
-    _ensureModel(_apiKey!, _baseUrl);
+    if (allTexts.isEmpty) return '';
 
     final sampleSize = allTexts.length > 50 ? 50 : allTexts.length;
     final step = allTexts.length ~/ sampleSize;
@@ -114,13 +119,13 @@ Please provide:
 Keep your response concise (under 200 words).
 ''';
 
-    final responseFuture = _client!.chat.completions.create(
-      ChatCompletionCreateRequest(
-        model: model ?? 'gpt-4o',
-        messages: [ChatMessage.user(prompt)],
-      ),
+    final response = await _createChatCompletion(
+      apiKey: _apiKey!,
+      baseUrl: _baseUrl,
+      model: model ?? _defaultModel,
+      prompt: prompt,
+      abortTrigger: abortTrigger,
     );
-    final response = await _awaitWithAbort(responseFuture, abortTrigger);
     return response.text ?? '';
   }
 
@@ -131,12 +136,11 @@ Keep your response concise (under 200 words).
     String? baseUrl,
   }) async {
     try {
-      _ensureModel(apiKey, baseUrl);
-      final response = await _client!.chat.completions.create(
-        ChatCompletionCreateRequest(
-          model: model ?? 'gpt-4o',
-          messages: [ChatMessage.user('Reply with a single word: OK')],
-        ),
+      final response = await _createChatCompletion(
+        apiKey: apiKey,
+        baseUrl: baseUrl,
+        model: model ?? _defaultModel,
+        prompt: 'Reply with a single word: OK',
       );
       final text = response.text ?? '';
       return text.toLowerCase().contains('ok');
@@ -148,13 +152,25 @@ Keep your response concise (under 200 words).
   @override
   Future<List<String>> listModels(String apiKey, {String? baseUrl}) async {
     try {
-      _ensureModel(apiKey, baseUrl);
-      final modelsList = await _client!.models.list();
+      final response = await _sendJson(
+        apiKey: apiKey,
+        baseUrl: baseUrl,
+        method: 'GET',
+        path: '/models',
+      );
 
-      final models = modelsList.data
-          .map((m) => m.id)
-          .where((id) => id.isNotEmpty)
-          .toList();
+      final data = response['data'];
+      final models = <String>[];
+      if (data is List) {
+        for (final item in data) {
+          if (item is Map<String, dynamic>) {
+            final id = item['id'];
+            if (id is String && id.isNotEmpty) {
+              models.add(id);
+            }
+          }
+        }
+      }
 
       models.sort((a, b) {
         if (a.contains('flash') && !b.contains('flash')) return -1;
@@ -164,17 +180,143 @@ Keep your response concise (under 200 words).
 
       return models;
     } catch (e) {
-      // Fallback
       return ['Get models failed. Please check your API key and baseURL.'];
     }
   }
 
   @override
   void dispose() {
-    _client?.close();
-    _client = null;
+    _httpClient?.close();
+    _httpClient = null;
     _apiKey = null;
     _baseUrl = null;
+  }
+
+  Future<_ChatCompletionResult> _createChatCompletion({
+    required String apiKey,
+    required String? baseUrl,
+    required String model,
+    required String prompt,
+    Future<void>? abortTrigger,
+  }) async {
+    final response = await _sendJson(
+      apiKey: apiKey,
+      baseUrl: baseUrl,
+      method: 'POST',
+      path: '/chat/completions',
+      abortTrigger: abortTrigger,
+      body: {
+        'model': model,
+        'messages': [
+          {'role': 'user', 'content': prompt},
+        ],
+      },
+    );
+
+    return _ChatCompletionResult.fromJson(response);
+  }
+
+  Future<Map<String, dynamic>> _sendJson({
+    required String apiKey,
+    required String? baseUrl,
+    required String method,
+    required String path,
+    Future<void>? abortTrigger,
+    Map<String, dynamic>? body,
+  }) async {
+    _ensureClient(apiKey, baseUrl);
+
+    final request = http.AbortableRequest(
+      method,
+      _buildUri(baseUrl, path),
+      abortTrigger: abortTrigger,
+    );
+    request.headers.addAll({
+      'Authorization': 'Bearer $apiKey',
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    });
+    if (body != null) {
+      request.body = jsonEncode(body);
+    }
+
+    try {
+      final streamedResponse = await _httpClient!.send(request);
+      final response = await http.Response.fromStream(streamedResponse);
+      return _decodeJsonResponse(response);
+    } on http.RequestAbortedException {
+      throw const TranslationAbortedException();
+    }
+  }
+
+  Uri _buildUri(String? baseUrl, String path) {
+    final rawBaseUrl = (baseUrl != null && baseUrl.trim().isNotEmpty)
+        ? baseUrl.trim()
+        : _defaultBaseUrl;
+    final baseUri = Uri.parse(rawBaseUrl);
+
+    if (!baseUri.hasScheme || baseUri.host.isEmpty) {
+      throw FormatException('Invalid base URL: $rawBaseUrl');
+    }
+
+    final basePath = baseUri.path.endsWith('/')
+        ? baseUri.path.substring(0, baseUri.path.length - 1)
+        : baseUri.path;
+    final normalizedPath = path.startsWith('/') ? path : '/$path';
+
+    return baseUri.replace(path: '$basePath$normalizedPath');
+  }
+
+  Map<String, dynamic> _decodeJsonResponse(http.Response response) {
+    final responseBody = utf8.decode(response.bodyBytes);
+    Object? decoded;
+    if (responseBody.isNotEmpty) {
+      try {
+        decoded = jsonDecode(responseBody);
+      } on FormatException {
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          final errorMessage = responseBody.trim().isEmpty
+              ? 'Unknown error'
+              : responseBody.trim();
+          throw Exception(
+            'OpenAI API request failed (${response.statusCode}): $errorMessage',
+          );
+        }
+        throw const FormatException('Expected a JSON object response.');
+      }
+    }
+    final json = decoded is Map<String, dynamic> ? decoded : null;
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      final errorMessage = _extractErrorMessage(json, responseBody);
+      throw Exception(
+        'OpenAI API request failed (${response.statusCode}): $errorMessage',
+      );
+    }
+
+    if (json == null) {
+      throw const FormatException('Expected a JSON object response.');
+    }
+
+    return json;
+  }
+
+  String _extractErrorMessage(Map<String, dynamic>? json, String responseBody) {
+    if (json case {'error': final error}) {
+      if (error is Map<String, dynamic>) {
+        final message = error['message'];
+        if (message is String && message.isNotEmpty) {
+          return message;
+        }
+      }
+    }
+
+    final trimmedBody = responseBody.trim();
+    if (trimmedBody.isNotEmpty) {
+      return trimmedBody;
+    }
+
+    return 'Unknown error';
   }
 
   String _buildTranslationPrompt({
@@ -209,7 +351,7 @@ Keep your response concise (under 200 words).
     if (glossary.isNotEmpty) {
       buffer.writeln('GLOSSARY (use these translations consistently):');
       glossary.forEach((source, target) {
-        buffer.writeln('  "$source" → "$target"');
+        buffer.writeln('  "$source" -> "$target"');
       });
       buffer.writeln();
     }
@@ -245,11 +387,14 @@ Keep your response concise (under 200 words).
   List<String> _parseTranslationResponse(
     String response,
     int expectedCount,
-    FinishReason? finishMessage,
+    String? finishReason,
   ) {
     if (response.isEmpty) {
-      if (finishMessage != null) {
-        return List.filled(expectedCount, finishMessage.toString());
+      if (finishReason != null && finishReason.isNotEmpty) {
+        return List.filled(
+          expectedCount,
+          '[Translation stopped: $finishReason]',
+        );
       }
       return List.filled(
         expectedCount,
@@ -283,17 +428,56 @@ Keep your response concise (under 200 words).
         ? results.sublist(0, expectedCount)
         : results;
   }
+}
 
-  Future<T> _awaitWithAbort<T>(
-    Future<T> future,
-    Future<void>? abortTrigger,
-  ) async {
-    if (abortTrigger == null) return await future;
+class _ChatCompletionResult {
+  final String? text;
+  final String? finishReason;
 
-    final abortFuture = abortTrigger.then<T>((_) {
-      throw const TranslationAbortedException();
-    });
+  const _ChatCompletionResult({this.text, this.finishReason});
 
-    return await Future.any([future, abortFuture]);
+  factory _ChatCompletionResult.fromJson(Map<String, dynamic> json) {
+    final choices = json['choices'];
+    if (choices is! List || choices.isEmpty) {
+      return const _ChatCompletionResult();
+    }
+
+    final firstChoice = choices.first;
+    if (firstChoice is! Map<String, dynamic>) {
+      return const _ChatCompletionResult();
+    }
+
+    final message = firstChoice['message'];
+    final content = message is Map<String, dynamic> ? message['content'] : null;
+
+    return _ChatCompletionResult(
+      text: _extractTextContent(content),
+      finishReason: firstChoice['finish_reason'] as String?,
+    );
+  }
+
+  static String? _extractTextContent(Object? content) {
+    if (content is String) {
+      return content;
+    }
+    if (content is! List) {
+      return null;
+    }
+
+    final parts = <String>[];
+    for (final item in content) {
+      if (item is Map<String, dynamic> && item['type'] == 'text') {
+        final text = item['text'];
+        if (text is String && text.isNotEmpty) {
+          parts.add(text);
+        }
+      }
+    }
+
+    if (parts.isEmpty) {
+      return null;
+    }
+
+    return parts.join('\n');
   }
 }

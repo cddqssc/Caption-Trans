@@ -33,11 +33,11 @@ dependencies:
   archive: ^4.0.7
 
   # Networking & Storage
+  http: ^1.6.0
   shared_preferences: ^2.3.0
 
   # UI
   cupertino_icons: ^1.0.8
-  openai_dart: ^1.4.0
 
   universal_io: ^2.3.1
   uuid: ^4.5.3

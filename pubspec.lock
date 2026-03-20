@@ -255,7 +255,7 @@ packages:
     source: hosted
     version: "1.0.2"
   http:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: http
       sha256: "87721a4a50b19c7f1d49001e51409bddc46303966ce89a65af4f4e6004896412"
@@ -390,14 +390,6 @@ packages:
       url: "https://pub.flutter-io.cn"
     source: hosted
     version: "9.3.0"
-  openai_dart:
-    dependency: "direct main"
-    description:
-      name: openai_dart
-      sha256: "4731f94ea9a09cd9e92333debcfb87efda2764718e506538206df9f540e9ab60"
-      url: "https://pub.flutter-io.cn"
-    source: hosted
-    version: "1.4.0"
   path:
     dependency: "direct main"
     description:
@@ -707,14 +699,6 @@ packages:
       url: "https://pub.flutter-io.cn"
     source: hosted
     version: "1.1.1"
-  web_socket:
-    dependency: transitive
-    description:
-      name: web_socket
-      sha256: "34d64019aa8e36bf9842ac014bb5d2f5586ca73df5e4d9bf5c936975cae6982c"
-      url: "https://pub.flutter-io.cn"
-    source: hosted
-    version: "1.0.1"
   win32:
     dependency: transitive
     description:
