@@ -248,10 +248,10 @@ class WhisperService {
       case 'ja':
         return const <String, dynamic>{
           'split_on_pause': true,
-          'pause_threshold_sec': 1,
-          'max_segment_duration_sec': 6,
-          'max_segment_chars': 24,
-          'min_split_chars': 4,
+          'pause_threshold_sec': 0.55,
+          'max_segment_duration_sec': 6.0,
+          'max_segment_chars': 30,
+          'min_split_chars': 6,
           'prefer_punctuation_split': true,
         };
       case 'zh':

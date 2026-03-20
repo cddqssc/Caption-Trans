@@ -102,7 +102,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get runtimeCreatingEnvironment => '正在创建 Python 环境...';
 
   @override
-  String get runtimeInstallingDependencies => '正在安装 WhisperX 依赖...';
+  String get runtimeInstallingDependencies => '正在安装 WhisperX 依赖（首次安装需要较长时间）...';
 
   @override
   String get runtimeStartingSidecar => '正在启动 WhisperX 侧车...';

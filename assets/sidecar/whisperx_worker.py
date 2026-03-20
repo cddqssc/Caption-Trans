@@ -314,9 +314,41 @@ def ends_with_soft_break(text: str) -> bool:
     return bool(trimmed) and trimmed[-1] in SOFT_BREAK_PUNCTUATION
 
 
+def is_punctuation_only(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return False
+
+    punctuation_chars = (
+        SENTENCE_END_PUNCTUATION
+        | SOFT_BREAK_PUNCTUATION
+        | CLOSING_PUNCTUATION
+        | JOIN_WITHOUT_LEADING_SPACE
+        | JOIN_WITHOUT_TRAILING_SPACE
+    )
+    return all(ch in punctuation_chars for ch in stripped)
+
+
 def is_closing_token(text: str) -> bool:
     stripped = text.strip()
     return bool(stripped) and all(ch in CLOSING_PUNCTUATION for ch in stripped)
+
+
+def merge_text_parts(left: str, right: str, language: Optional[str]) -> str:
+    left_text = left.strip()
+    right_text = right.strip()
+    if not left_text:
+        return right_text
+    if not right_text:
+        return left_text
+    if language in LANGUAGES_WITHOUT_SPACES:
+        return f"{left_text}{right_text}".strip()
+    if (
+        right_text[0] in JOIN_WITHOUT_LEADING_SPACE
+        or left_text[-1] in JOIN_WITHOUT_TRAILING_SPACE
+    ):
+        return f"{left_text}{right_text}"
+    return f"{left_text} {right_text}"
 
 
 def resolve_span(
@@ -356,22 +388,310 @@ def gap_after_word(
     return max(0.0, start - end)
 
 
+def resolve_explicit_span(words: List[Dict[str, Any]]) -> Tuple[Optional[float], Optional[float]]:
+    start: Optional[float] = None
+    end: Optional[float] = None
+
+    for item in words:
+        word_start = item.get("start")
+        if isinstance(word_start, float):
+            start = word_start
+            break
+
+    for item in reversed(words):
+        word_end = item.get("end")
+        if isinstance(word_end, float):
+            end = word_end
+            break
+
+    if start is not None and end is not None and end < start:
+        end = start
+    return start, end
+
+
 def build_segment_from_words(
     words: List[Dict[str, Any]],
     language: Optional[str],
     fallback_start: float,
     fallback_end: float,
+    allow_fallback: bool = True,
 ) -> Optional[Dict[str, Any]]:
     text = join_words(words, language)
     if not text:
         return None
 
-    start, end = resolve_span(words, fallback_start, fallback_end)
+    start, end = resolve_explicit_span(words)
+    if start is None or end is None:
+        if not allow_fallback:
+            return None
+        start, end = resolve_span(words, fallback_start, fallback_end)
+
     return {
         "start": start,
         "end": end,
         "text": text,
     }
+
+
+def should_commit_immediately(break_reason: str) -> bool:
+    return break_reason == "sentence"
+
+
+def classify_safe_break(
+    text: str,
+    current_word: Dict[str, Any],
+    next_word: Optional[Dict[str, Any]],
+    current_char_count: int,
+    split_on_pause: bool,
+    prefer_punctuation_split: bool,
+    pause_threshold: float,
+    min_split_chars: int,
+) -> Optional[str]:
+    if next_word is None or current_char_count < min_split_chars:
+        return None
+
+    next_text = str(next_word.get("word") or "")
+    if (
+        prefer_punctuation_split
+        and not is_closing_token(next_text)
+        and ends_with_sentence_boundary(text)
+    ):
+        return "sentence"
+
+    if not is_closing_token(next_text) and ends_with_soft_break(text):
+        return "soft"
+
+    if split_on_pause:
+        gap = gap_after_word(current_word, next_word)
+        if gap is not None and gap >= pause_threshold:
+            return "pause"
+
+    return None
+
+
+def find_segment_end_index(
+    words: List[Dict[str, Any]],
+    segment_start: int,
+    language: Optional[str],
+    fallback_start: float,
+    fallback_end: float,
+    split_on_pause: bool,
+    prefer_punctuation_split: bool,
+    pause_threshold: float,
+    max_duration: float,
+    max_chars: int,
+    min_split_chars: int,
+) -> int:
+    last_safe_break: Optional[int] = None
+
+    for index in range(segment_start, len(words)):
+        current_words = words[segment_start : index + 1]
+        current_text = join_words(current_words, language)
+        if not current_text:
+            continue
+
+        current_char_count = effective_char_count(current_text, language)
+        next_word = words[index + 1] if index + 1 < len(words) else None
+        break_reason = classify_safe_break(
+            current_text,
+            words[index],
+            next_word,
+            current_char_count,
+            split_on_pause,
+            prefer_punctuation_split,
+            pause_threshold,
+            min_split_chars,
+        )
+
+        if break_reason is not None:
+            candidate = build_segment_from_words(
+                current_words,
+                language,
+                fallback_start,
+                fallback_end,
+                allow_fallback=False,
+            )
+            if candidate is not None and not is_punctuation_only(candidate["text"]):
+                last_safe_break = index + 1
+                if should_commit_immediately(break_reason):
+                    return index + 1
+
+        current_start, current_end = resolve_span(
+            current_words, fallback_start, fallback_end
+        )
+        current_duration = max(0.0, current_end - current_start)
+        has_hit_limit = (
+            current_char_count >= max_chars or current_duration >= max_duration
+        )
+        if has_hit_limit and last_safe_break is not None:
+            return last_safe_break
+
+    return len(words)
+
+
+def segment_duration(segment: Dict[str, Any]) -> float:
+    return max(
+        0.0,
+        to_float(segment.get("end"), 0.0) - to_float(segment.get("start"), 0.0),
+    )
+
+
+def segment_gap(left: Dict[str, Any], right: Dict[str, Any]) -> float:
+    return to_float(right.get("start"), 0.0) - to_float(left.get("end"), 0.0)
+
+
+def has_suspicious_timing(segment: Dict[str, Any], language: Optional[str]) -> bool:
+    text = str(segment.get("text") or "").strip()
+    chars = effective_char_count(text, language)
+    duration = segment_duration(segment)
+    if chars <= 0:
+        return True
+    if is_punctuation_only(text):
+        return duration >= 0.5
+    if chars <= 2 and duration >= 2.5:
+        return True
+    return False
+
+
+def merge_segments(
+    base: Dict[str, Any],
+    extra: Dict[str, Any],
+    language: Optional[str],
+    include_timing: bool,
+) -> Dict[str, Any]:
+    merged = {
+        "start": to_float(base.get("start"), 0.0),
+        "end": to_float(base.get("end"), 0.0),
+        "text": merge_text_parts(
+            str(base.get("text") or ""),
+            str(extra.get("text") or ""),
+            language,
+        ),
+    }
+    if include_timing:
+        merged["start"] = min(
+            merged["start"], to_float(extra.get("start"), merged["start"])
+        )
+        merged["end"] = max(merged["end"], to_float(extra.get("end"), merged["end"]))
+    return merged
+
+
+def should_merge_into_previous(
+    previous: Dict[str, Any],
+    current: Dict[str, Any],
+    language: Optional[str],
+    min_split_chars: int,
+) -> bool:
+    text = str(current.get("text") or "").strip()
+    if not text:
+        return True
+
+    chars = effective_char_count(text, language)
+    duration = segment_duration(current)
+    gap = segment_gap(previous, current)
+    previous_text = str(previous.get("text") or "").strip()
+
+    if is_punctuation_only(text):
+        return True
+    if has_suspicious_timing(current, language):
+        return True
+    if (
+        chars <= 2
+        and duration <= 0.2
+        and gap <= 0.2
+        and previous_text
+        and not ends_with_sentence_boundary(previous_text)
+    ):
+        return True
+    if (
+        chars < min_split_chars
+        and gap <= 0.05
+        and previous_text
+        and not ends_with_sentence_boundary(previous_text)
+    ):
+        return True
+    if gap < -0.05 and chars <= max(2, min_split_chars):
+        return True
+    return False
+
+
+def repair_split_segments(
+    segments: List[Dict[str, Any]],
+    language: Optional[str],
+    segmentation_options: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    min_split_chars = max(
+        1,
+        to_int(segmentation_options.get("min_split_chars"), 4),
+    )
+    repaired: List[Dict[str, Any]] = []
+    pending_prefix: Optional[Dict[str, Any]] = None
+
+    for raw_segment in normalize_segments(segments):
+        segment = {
+            "start": to_float(raw_segment.get("start"), 0.0),
+            "end": to_float(raw_segment.get("end"), 0.0),
+            "text": str(raw_segment.get("text") or "").strip(),
+        }
+        if not segment["text"]:
+            continue
+
+        if pending_prefix is not None:
+            if has_suspicious_timing(pending_prefix, language):
+                segment["text"] = merge_text_parts(
+                    str(pending_prefix.get("text") or ""),
+                    segment["text"],
+                    language,
+                )
+            else:
+                segment = merge_segments(
+                    pending_prefix,
+                    segment,
+                    language,
+                    include_timing=True,
+                )
+            pending_prefix = None
+
+        if not repaired:
+            if is_punctuation_only(segment["text"]) or has_suspicious_timing(
+                segment, language
+            ):
+                pending_prefix = segment
+                continue
+            repaired.append(segment)
+            continue
+
+        previous = repaired[-1]
+        if should_merge_into_previous(previous, segment, language, min_split_chars):
+            repaired[-1] = merge_segments(
+                previous,
+                segment,
+                language,
+                include_timing=not has_suspicious_timing(segment, language),
+            )
+            continue
+
+        repaired.append(segment)
+
+    if pending_prefix is not None:
+        if repaired:
+            if has_suspicious_timing(pending_prefix, language):
+                repaired[-1]["text"] = merge_text_parts(
+                    repaired[-1]["text"],
+                    str(pending_prefix.get("text") or ""),
+                    language,
+                )
+            else:
+                repaired[-1] = merge_segments(
+                    repaired[-1],
+                    pending_prefix,
+                    language,
+                    include_timing=True,
+                )
+        else:
+            repaired.append(pending_prefix)
+
+    return normalize_segments(repaired)
 
 
 def split_segment_by_words(
@@ -415,57 +735,36 @@ def split_segment_by_words(
     )
 
     split_segments: List[Dict[str, Any]] = []
-    current_words: List[Dict[str, Any]] = []
+    segment_start = 0
 
-    for index, word in enumerate(words):
-        current_words.append(word)
-        next_word = words[index + 1] if index + 1 < len(words) else None
+    while segment_start < len(words):
+        segment_end = find_segment_end_index(
+            words,
+            segment_start,
+            language,
+            start,
+            end,
+            split_on_pause,
+            prefer_punctuation_split,
+            pause_threshold,
+            max_duration,
+            max_chars,
+            min_split_chars,
+        )
+        if segment_end <= segment_start:
+            segment_end = segment_start + 1
 
-        current_text = join_words(current_words, language)
-        if not current_text:
-            continue
-
-        current_start, current_end = resolve_span(current_words, start, end)
-        current_duration = max(0.0, current_end - current_start)
-        current_char_count = effective_char_count(current_text, language)
-
-        should_break = False
-        if (
-            prefer_punctuation_split
-            and next_word is not None
-            and not is_closing_token(str(next_word.get("word") or ""))
-            and ends_with_sentence_boundary(current_text)
-        ):
-            should_break = True
-
-        if (
-            not should_break
-            and split_on_pause
-            and next_word is not None
-            and current_char_count >= min_split_chars
-        ):
-            gap = gap_after_word(word, next_word)
-            if gap is not None and gap >= pause_threshold:
-                should_break = True
-
-        if not should_break and next_word is not None and current_char_count >= min_split_chars:
-            if current_duration >= max_duration:
-                should_break = True
-            elif current_char_count >= max_chars and (
-                current_duration >= max_duration * 0.65 or ends_with_soft_break(current_text)
-            ):
-                should_break = True
-
-        if should_break:
-            segment = build_segment_from_words(current_words, language, start, end)
-            if segment is not None:
-                split_segments.append(segment)
-            current_words = []
-
-    if current_words:
-        segment = build_segment_from_words(current_words, language, start, end)
+        allow_fallback = segment_start == 0 and segment_end == len(words)
+        segment = build_segment_from_words(
+            words[segment_start:segment_end],
+            language,
+            start,
+            end,
+            allow_fallback=allow_fallback,
+        )
         if segment is not None:
             split_segments.append(segment)
+        segment_start = segment_end
 
     return split_segments or [{"start": start, "end": end, "text": text}]
 
@@ -486,7 +785,7 @@ def normalize_transcript_segments(
             split_segment_by_words(item, language, segmentation_options)
         )
 
-    return normalize_segments(split_segments)
+    return repair_split_segments(split_segments, language, segmentation_options)
 
 
 class WhisperXWorker:
