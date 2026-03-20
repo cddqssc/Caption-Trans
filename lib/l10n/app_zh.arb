@@ -14,6 +14,8 @@
   "clear": "清除",
   "stepExtractSubtitles": "提取字幕",
   "whisperModel": "Whisper 模型",
+  "sourceVideoLanguage": "源视频语言",
+  "sourceVideoLanguageHint": "选取源视频语言可以提高转录效率和准确率",
   "diskUsage": "磁盘",
   "memoryUsage": "内存",
   "transcriptionQuality": "质量",

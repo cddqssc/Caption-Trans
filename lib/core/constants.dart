@@ -75,6 +75,7 @@ class AppConstants {
     'pt': 'Português',
     'ru': 'Русский',
     'ar': 'العربية',
+    'auto': 'Auto detect(Not recommended)',
   };
 
   /// Supported video file extensions.

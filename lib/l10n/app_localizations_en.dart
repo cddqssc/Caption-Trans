@@ -51,6 +51,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get whisperModel => 'Whisper Model';
 
   @override
+  String get sourceVideoLanguage => 'Source Video Language';
+
+  @override
+  String get sourceVideoLanguageHint =>
+      'Selecting source video language can improve transcription efficiency and accuracy.';
+
+  @override
   String get diskUsage => 'Disk';
 
   @override
@@ -97,7 +104,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get runtimeInstallingDependencies =>
-      'Installing WhisperX dependencies...';
+      'Installing WhisperX dependencies (first run may take a while)...';
 
   @override
   String get runtimeStartingSidecar => 'Starting WhisperX sidecar...';

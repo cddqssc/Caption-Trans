@@ -128,7 +128,7 @@ class TranscriptionBloc extends Bloc<TranscriptionEvent, TranscriptionState> {
       );
       final result = await _whisperService.transcribeWav(
         wavPath,
-        language: event.language ?? 'ja',
+        language: event.language ?? 'auto',
         onRuntimeInfo: (info) {
           emitTranscribingState(
             phase: currentPhase,

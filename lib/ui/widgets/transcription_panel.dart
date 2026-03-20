@@ -8,14 +8,18 @@ import 'package:caption_trans/l10n/app_localizations.dart';
 class TranscriptionPanel extends StatelessWidget {
   final TranscriptionState state;
   final String selectedModel;
+  final String selectedSourceLanguage;
   final ValueChanged<String> onModelChanged;
+  final ValueChanged<String> onSourceLanguageChanged;
   final VoidCallback onStartTranscription;
 
   const TranscriptionPanel({
     super.key,
     required this.state,
     required this.selectedModel,
+    required this.selectedSourceLanguage,
     required this.onModelChanged,
+    required this.onSourceLanguageChanged,
     required this.onStartTranscription,
   });
 
@@ -80,6 +84,48 @@ class TranscriptionPanel extends StatelessWidget {
                 const SizedBox(width: 16),
                 _buildStartButton(context, l10n),
               ],
+            ),
+            const SizedBox(height: 20),
+            Text(
+              l10n.sourceVideoLanguage,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: Colors.white.withValues(alpha: 0.6),
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(height: 8),
+            DropdownButtonFormField<String>(
+              initialValue: selectedSourceLanguage,
+              decoration: const InputDecoration(
+                isDense: true,
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
+              ),
+              items: AppConstants.supportedLanguages.entries
+                  .map(
+                    (e) => DropdownMenuItem(
+                      value: e.key,
+                      child: Text(
+                        '${e.value} (${e.key})',
+                        style: const TextStyle(fontSize: 14),
+                      ),
+                    ),
+                  )
+                  .toList(),
+              onChanged: _isProcessing
+                  ? null
+                  : (v) {
+                      if (v != null) onSourceLanguageChanged(v);
+                    },
+            ),
+            const SizedBox(height: 6),
+            Text(
+              l10n.sourceVideoLanguageHint,
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: Colors.white.withValues(alpha: 0.5),
+              ),
             ),
             if (_isProcessing ||
                 state is TranscriptionComplete ||

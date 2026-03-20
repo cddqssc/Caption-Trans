@@ -51,6 +51,12 @@ class AppLocalizationsZh extends AppLocalizations {
   String get whisperModel => 'Whisper 模型';
 
   @override
+  String get sourceVideoLanguage => '源视频语言';
+
+  @override
+  String get sourceVideoLanguageHint => '选取源视频语言可以提高转录效率和准确率';
+
+  @override
   String get diskUsage => '磁盘';
 
   @override

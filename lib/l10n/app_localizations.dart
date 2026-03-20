@@ -182,6 +182,18 @@ abstract class AppLocalizations {
   /// **'Whisper Model'**
   String get whisperModel;
 
+  /// No description provided for @sourceVideoLanguage.
+  ///
+  /// In en, this message translates to:
+  /// **'Source Video Language'**
+  String get sourceVideoLanguage;
+
+  /// No description provided for @sourceVideoLanguageHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Selecting source video language can improve transcription efficiency and accuracy.'**
+  String get sourceVideoLanguageHint;
+
   /// No description provided for @diskUsage.
   ///
   /// In en, this message translates to:
@@ -275,7 +287,7 @@ abstract class AppLocalizations {
   /// No description provided for @runtimeInstallingDependencies.
   ///
   /// In en, this message translates to:
-  /// **'Installing WhisperX dependencies...'**
+  /// **'Installing WhisperX dependencies (first run may take a while)...'**
   String get runtimeInstallingDependencies;
 
   /// No description provided for @runtimeStartingSidecar.

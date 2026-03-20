@@ -7,6 +7,7 @@ class Project extends Equatable {
   final String id;
   final String name;
   final String videoPath;
+  final String sourceVideoLanguage;
   final DateTime createdAt;
   final DateTime updatedAt;
   final TranscriptionResult transcription;
@@ -16,6 +17,7 @@ class Project extends Equatable {
     required this.id,
     required this.name,
     required this.videoPath,
+    required this.sourceVideoLanguage,
     required this.createdAt,
     required this.updatedAt,
     required this.transcription,
@@ -26,6 +28,7 @@ class Project extends Equatable {
     String? id,
     String? name,
     String? videoPath,
+    String? sourceVideoLanguage,
     DateTime? createdAt,
     DateTime? updatedAt,
     TranscriptionResult? transcription,
@@ -35,6 +38,7 @@ class Project extends Equatable {
       id: id ?? this.id,
       name: name ?? this.name,
       videoPath: videoPath ?? this.videoPath,
+      sourceVideoLanguage: sourceVideoLanguage ?? this.sourceVideoLanguage,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       transcription: transcription ?? this.transcription,
@@ -47,6 +51,10 @@ class Project extends Equatable {
       id: json['id'] as String,
       name: json['name'] as String,
       videoPath: json['videoPath'] as String,
+      sourceVideoLanguage:
+          (json['sourceVideoLanguage'] as String?)?.trim().isNotEmpty == true
+          ? json['sourceVideoLanguage'] as String
+          : 'en',
       createdAt: DateTime.parse(json['createdAt'] as String),
       updatedAt: DateTime.parse(json['updatedAt'] as String),
       transcription: TranscriptionResult.fromJson(
@@ -65,6 +73,7 @@ class Project extends Equatable {
       'id': id,
       'name': name,
       'videoPath': videoPath,
+      'sourceVideoLanguage': sourceVideoLanguage,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
       'transcription': transcription.toJson(),
@@ -74,12 +83,13 @@ class Project extends Equatable {
 
   @override
   List<Object?> get props => [
-        id,
-        name,
-        videoPath,
-        createdAt,
-        updatedAt,
-        transcription,
-        translationConfig,
-      ];
+    id,
+    name,
+    videoPath,
+    sourceVideoLanguage,
+    createdAt,
+    updatedAt,
+    transcription,
+    translationConfig,
+  ];
 }

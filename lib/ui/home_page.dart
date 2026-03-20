@@ -47,6 +47,7 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   String _selectedModel = AppConstants.defaultWhisperModel;
+  String _sourceVideoLanguage = 'en';
   String _targetLanguage = 'zh';
   String _apiKey = '';
   String _targetModel = 'gemini-2.5-flash-lite';
@@ -241,11 +242,17 @@ class _HomePageState extends State<HomePage> {
                       return TranscriptionPanel(
                         state: state,
                         selectedModel: _selectedModel,
+                        selectedSourceLanguage: _sourceVideoLanguage,
                         onModelChanged: (model) =>
                             setState(() => _selectedModel = model),
+                        onSourceLanguageChanged: (language) =>
+                            setState(() => _sourceVideoLanguage = language),
                         onStartTranscription: () {
                           context.read<TranscriptionBloc>().add(
-                            StartTranscription(modelName: _selectedModel),
+                            StartTranscription(
+                              modelName: _selectedModel,
+                              language: _sourceVideoLanguage,
+                            ),
                           );
                         },
                       );
@@ -424,6 +431,7 @@ class _HomePageState extends State<HomePage> {
               id: const Uuid().v4(),
               name: state.fileName,
               videoPath: state.videoPath,
+              sourceVideoLanguage: _sourceVideoLanguage,
               createdAt: DateTime.now(),
               updatedAt: DateTime.now(),
               transcription: state.result,
@@ -854,6 +862,7 @@ class _HomePageState extends State<HomePage> {
   void _loadProject(Project project) {
     setState(() {
       _activeProject = project;
+      _sourceVideoLanguage = project.sourceVideoLanguage;
       if (project.translationConfig != null) {
         _targetLanguage = project.translationConfig!.targetLanguage;
         // Restore other config if needed
