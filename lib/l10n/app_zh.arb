@@ -31,7 +31,7 @@
   "runtimeDownloading": "正在下载运行时包...",
   "runtimeExtracting": "正在解压运行时包...",
   "runtimeCreatingEnvironment": "正在创建 Python 环境...",
-  "runtimeInstallingDependencies": "正在安装 WhisperX 依赖...",
+  "runtimeInstallingDependencies": "正在安装 WhisperX 依赖（首次安装需要较长时间）...",
   "runtimeStartingSidecar": "正在启动 WhisperX 侧车...",
   "transcodingAudio": "正在将媒体转码为音频...",
   "transcribingStatus": "正在转录...",
