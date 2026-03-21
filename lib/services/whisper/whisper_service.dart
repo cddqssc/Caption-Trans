@@ -7,17 +7,27 @@ import '../audio/media_to_wav_converter.dart';
 import 'whisperx_sidecar.dart';
 
 class _WhisperExecutionConfig {
-  final String device;
+  final String asrDevice;
+  final String vadDevice;
+  final String alignDevice;
   final String computeType;
   final int batchSize;
+  final bool usingGpu;
   final bool usesCuda;
+  final String modeLabel;
+  final String? deviceName;
   final String? statusDetail;
 
   const _WhisperExecutionConfig({
-    required this.device,
+    required this.asrDevice,
+    required this.vadDevice,
+    required this.alignDevice,
     required this.computeType,
     required this.batchSize,
+    required this.usingGpu,
     required this.usesCuda,
+    required this.modeLabel,
+    required this.deviceName,
     this.statusDetail,
   });
 }
@@ -34,8 +44,9 @@ class WhisperService {
   };
 
   static const String _cpuDevice = 'cpu';
+  static const String _mpsDevice = 'mps';
   static const String _cpuComputeType = 'int8';
-  static const int _cpuBatchSize = 4;
+  static const int _cpuBatchSize = 8;
 
   final WhisperXSidecar _sidecar = WhisperXSidecar();
   final MediaToWavConverter _wavConverter = MediaToWavConverter();
@@ -143,30 +154,49 @@ class WhisperService {
         onRuntimeInfo: onRuntimeInfo,
       );
     } catch (error) {
-      if (!primaryConfig.usesCuda || !_looksLikeCudaFailure(error)) {
-        rethrow;
-      }
+      if (primaryConfig.usesCuda) {
+        if (!_looksLikeCudaFailure(error)) {
+          rethrow;
+        }
 
-      final _WhisperExecutionConfig? degradedConfig = _buildDegradedCudaConfig(
-        primaryConfig,
-      );
-      if (degradedConfig != null) {
-        await _restartSidecarForRetry();
-        try {
-          return await _transcribeWithConfig(
-            wavPath: wavPath,
-            modelName: modelName,
-            language: language,
-            config: degradedConfig,
-            onStatus: onStatus,
-            onLog: onLog,
-            onRuntimeInfo: onRuntimeInfo,
-          );
-        } catch (retryError) {
-          if (!_looksLikeCudaFailure(retryError)) {
-            rethrow;
+        final _WhisperExecutionConfig? degradedConfig =
+            _buildDegradedCudaConfig(primaryConfig);
+        if (degradedConfig != null) {
+          await _restartSidecarForRetry();
+          try {
+            return await _transcribeWithConfig(
+              wavPath: wavPath,
+              modelName: modelName,
+              language: language,
+              config: degradedConfig,
+              onStatus: onStatus,
+              onLog: onLog,
+              onRuntimeInfo: onRuntimeInfo,
+            );
+          } catch (retryError) {
+            if (!_looksLikeCudaFailure(retryError)) {
+              rethrow;
+            }
           }
         }
+
+        await _restartSidecarForRetry();
+        return _transcribeWithConfig(
+          wavPath: wavPath,
+          modelName: modelName,
+          language: language,
+          config: _cpuConfig(
+            statusDetail:
+                'CUDA failed, falling back to CPU ($_cpuComputeType, batch=$_cpuBatchSize)',
+          ),
+          onStatus: onStatus,
+          onLog: onLog,
+          onRuntimeInfo: onRuntimeInfo,
+        );
+      }
+
+      if (!primaryConfig.usingGpu || !_looksLikeMpsFailure(error)) {
+        rethrow;
       }
 
       await _restartSidecarForRetry();
@@ -176,7 +206,7 @@ class WhisperService {
         language: language,
         config: _cpuConfig(
           statusDetail:
-              'CUDA failed, falling back to CPU ($_cpuComputeType, batch=$_cpuBatchSize)',
+              'MPS failed, falling back to CPU ($_cpuComputeType, batch=$_cpuBatchSize)',
         ),
         onStatus: onStatus,
         onLog: onLog,
@@ -205,7 +235,9 @@ class WhisperService {
       wavPath: wavPath,
       modelName: modelName,
       language: language,
-      device: config.device,
+      device: config.asrDevice,
+      vadDevice: config.vadDevice,
+      alignDevice: config.alignDevice,
       computeType: config.computeType,
       batchSize: config.batchSize,
       noAlign: false,
@@ -233,11 +265,7 @@ class WhisperService {
   Map<String, dynamic> _buildVadOptions(String? language) {
     switch (_normalizeLanguageCode(language)) {
       case 'ja':
-        return const <String, dynamic>{
-          'chunk_size': 12,
-          'vad_onset': 0.4,
-          'vad_offset': 0.25,
-        };
+        return const <String, dynamic>{};
       default:
         return const <String, dynamic>{};
     }
@@ -270,6 +298,30 @@ class WhisperService {
   Future<_WhisperExecutionConfig> _resolveExecutionConfig(
     String whisperxModel,
   ) async {
+    if (Platform.isMacOS && _isArm64Process()) {
+      final WhisperXRuntimeProbe probe = await _loadRuntimeProbe();
+      if (probe.canUseMps) {
+        return const _WhisperExecutionConfig(
+          asrDevice: _cpuDevice,
+          vadDevice: _mpsDevice,
+          alignDevice: _mpsDevice,
+          computeType: _cpuComputeType,
+          batchSize: _cpuBatchSize,
+          usingGpu: true,
+          usesCuda: false,
+          modeLabel: 'Mixed CPU + MPS',
+          deviceName: 'Apple Metal (MPS)',
+          statusDetail:
+              'Using CPU ASR with MPS-accelerated VAD and alignment (int8, batch=8)',
+        );
+      }
+
+      final String statusDetail = probe.mpsBuilt
+          ? 'MPS is unavailable on this machine, using CPU ($_cpuComputeType, batch=$_cpuBatchSize)'
+          : 'Installed PyTorch runtime does not expose MPS, using CPU ($_cpuComputeType, batch=$_cpuBatchSize)';
+      return _cpuConfig(statusDetail: statusDetail);
+    }
+
     if (!Platform.isWindows) {
       return _cpuConfig();
     }
@@ -286,10 +338,15 @@ class WhisperService {
         : 'CUDA GPU';
 
     return _WhisperExecutionConfig(
-      device: 'cuda',
+      asrDevice: 'cuda',
+      vadDevice: 'cuda',
+      alignDevice: 'cuda',
       computeType: computeType,
       batchSize: batchSize,
+      usingGpu: true,
       usesCuda: true,
+      modeLabel: 'CUDA GPU',
+      deviceName: deviceName,
       statusDetail:
           'Using $deviceName on CUDA ($computeType, batch=$batchSize)',
     );
@@ -302,29 +359,23 @@ class WhisperService {
   Future<WhisperRuntimeInfo> _buildRuntimeInfo(
     _WhisperExecutionConfig config,
   ) async {
-    final WhisperXRuntimeProbe? probe = Platform.isWindows
+    final WhisperXRuntimeProbe? probe =
+        (Platform.isWindows || (Platform.isMacOS && _isArm64Process()))
         ? await _loadRuntimeProbe()
         : null;
 
     final bool cudaAvailable = probe?.cudaAvailable == true;
     final String? torchCudaVersion = probe?.torchCudaVersion;
-    final String? deviceName = config.usesCuda
-        ? (probe?.cudaDeviceName?.trim().isNotEmpty == true
-              ? probe!.cudaDeviceName!.trim()
-              : 'CUDA GPU')
-        : null;
-    final String modeLabel = switch ((config.usesCuda, cudaAvailable)) {
-      (true, _) => 'CUDA GPU',
-      (false, true) => 'CPU fallback',
-      (false, false) => 'CPU',
-    };
+    final String modeLabel = !config.usingGpu && cudaAvailable
+        ? 'CPU fallback'
+        : config.modeLabel;
 
     return WhisperRuntimeInfo(
       modeLabel: modeLabel,
-      deviceName: deviceName,
+      deviceName: config.deviceName,
       computeType: config.computeType,
       batchSize: config.batchSize,
-      usingGpu: config.usesCuda,
+      usingGpu: config.usingGpu,
       cudaAvailable: cudaAvailable,
       torchCudaVersion: torchCudaVersion,
       note: config.statusDetail,
@@ -333,10 +384,15 @@ class WhisperService {
 
   _WhisperExecutionConfig _cpuConfig({String? statusDetail}) {
     return _WhisperExecutionConfig(
-      device: _cpuDevice,
+      asrDevice: _cpuDevice,
+      vadDevice: _cpuDevice,
+      alignDevice: _cpuDevice,
       computeType: _cpuComputeType,
       batchSize: _cpuBatchSize,
+      usingGpu: false,
       usesCuda: false,
+      modeLabel: 'CPU',
+      deviceName: null,
       statusDetail: statusDetail,
     );
   }
@@ -356,10 +412,15 @@ class WhisperService {
     }
 
     return _WhisperExecutionConfig(
-      device: 'cuda',
+      asrDevice: 'cuda',
+      vadDevice: 'cuda',
+      alignDevice: 'cuda',
       computeType: 'int8',
       batchSize: smallerBatchSize,
+      usingGpu: true,
       usesCuda: true,
+      modeLabel: 'CUDA GPU',
+      deviceName: config.deviceName,
       statusDetail:
           'CUDA init failed or VRAM is low, retrying lighter GPU mode (int8, batch=$smallerBatchSize)',
     );
@@ -407,6 +468,24 @@ class WhisperService {
       'failed to load library',
       'dll load failed',
     ].any(lower.contains);
+  }
+
+  bool _looksLikeMpsFailure(Object error) {
+    final String lower = error.toString().toLowerCase();
+    return <String>[
+      'mps',
+      'metal',
+      'not implemented for mps',
+      'placeholder storage has not been allocated on mps',
+      'mps backend out of memory',
+      'does not include mps support',
+      'is not available on this machine',
+    ].any(lower.contains);
+  }
+
+  bool _isArm64Process() {
+    final String version = Platform.version.toLowerCase();
+    return version.contains('arm64') || version.contains('aarch64');
   }
 
   Future<void> _restartSidecarForRetry() async {

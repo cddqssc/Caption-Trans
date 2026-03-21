@@ -11,7 +11,9 @@ import wave
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
+import torch
 import whisperx
+from whisperx.vads.pyannote import Pyannote
 
 
 SAMPLE_RATE = 16000
@@ -41,6 +43,11 @@ JAPANESE_SEGMENTATION_OPTIONS: Dict[str, Any] = {
     "max_segment_duration_sec": 4.0,
     "max_segment_chars": 24,
     "min_split_chars": 4,
+}
+DEFAULT_WHISPERX_VAD_OPTIONS: Dict[str, Any] = {
+    "chunk_size": 30,
+    "vad_onset": 0.500,
+    "vad_offset": 0.363,
 }
 
 
@@ -186,6 +193,38 @@ def normalize_options(raw_options: Any) -> Dict[str, Any]:
             continue
         normalized[str(key)] = value
     return normalized
+
+
+def normalize_device(value: Any, default: str = "cpu") -> str:
+    device = str(value or default).strip().lower()
+    return device or default
+
+
+def ensure_mps_available() -> None:
+    mps_backend = getattr(torch.backends, "mps", None)
+    if mps_backend is None or not mps_backend.is_built():
+        raise RuntimeError("This PyTorch build does not include MPS support.")
+    if not mps_backend.is_available():
+        raise RuntimeError("MPS is not available on this machine.")
+
+
+def build_vad_model_options(vad_options: Dict[str, Any]) -> Dict[str, Any]:
+    model_options: Dict[str, Any] = {}
+    for key in ("vad_onset", "vad_offset"):
+        if key in vad_options:
+            model_options[key] = vad_options[key]
+    return model_options
+
+
+def build_effective_vad_options(
+    vad_options: Dict[str, Any], use_custom_vad: bool
+) -> Dict[str, Any]:
+    if not use_custom_vad:
+        return dict(vad_options)
+
+    effective = dict(DEFAULT_WHISPERX_VAD_OPTIONS)
+    effective.update(vad_options)
+    return effective
 
 
 def build_segmentation_options(
@@ -794,16 +833,25 @@ def normalize_transcript_segments(
 
 class WhisperXWorker:
     def __init__(self) -> None:
-        self.models: Dict[Tuple[str, str, str, Optional[str], str, str], Any] = {}
+        self.models: Dict[
+            Tuple[str, str, str, str, Optional[str], str, str], Any
+        ] = {}
+        self.vad_models: Dict[Tuple[str, str], Any] = {}
         self.align_models: Dict[Tuple[str, str], Tuple[Any, Dict[str, Any]]] = {}
 
     def clear_device_resources(self, device: Optional[str] = None) -> None:
         if device is None:
             self.models.clear()
+            self.vad_models.clear()
             self.align_models.clear()
         else:
             self.models = {
-                key: value for key, value in self.models.items() if key[1] != device
+                key: value
+                for key, value in self.models.items()
+                if key[1] != device and key[2] != device
+            }
+            self.vad_models = {
+                key: value for key, value in self.vad_models.items() if key[0] != device
             }
             self.align_models = {
                 key: value
@@ -813,52 +861,87 @@ class WhisperXWorker:
 
         gc.collect()
 
-        if device not in (None, "cuda"):
-            return
-
         try:
-            import torch
-
-            if torch.cuda.is_available():
+            if device in (None, "cuda") and torch.cuda.is_available():
                 torch.cuda.empty_cache()
+            if device in (None, "mps"):
+                empty_cache = getattr(getattr(torch, "mps", None), "empty_cache", None)
+                if callable(empty_cache):
+                    empty_cache()
         except Exception:
             return
+
+    def get_vad_model(self, device: str, vad_options: Dict[str, Any]) -> Any:
+        device = normalize_device(device)
+        model_options = build_vad_model_options(vad_options)
+        key = (
+            device,
+            json.dumps(model_options, sort_keys=True, ensure_ascii=False),
+        )
+        if key in self.vad_models:
+            return self.vad_models[key]
+
+        if device == "cuda":
+            self.clear_device_resources(device="cuda")
+        elif device == "mps":
+            ensure_mps_available()
+
+        model = Pyannote(torch.device(device), **model_options)
+        self.vad_models[key] = model
+        return model
 
     def get_model(
         self,
         model_name: str,
-        device: str,
+        asr_device: str,
         compute_type: str,
         language: Optional[str],
         asr_options: Dict[str, Any],
         vad_options: Dict[str, Any],
+        vad_device: Optional[str] = None,
     ) -> Any:
+        resolved_vad_device = normalize_device(vad_device, asr_device)
+        use_custom_vad = resolved_vad_device != asr_device
+        effective_vad_options = build_effective_vad_options(
+            vad_options, use_custom_vad
+        )
         key = (
             model_name,
-            device,
+            asr_device,
+            resolved_vad_device,
             compute_type,
             language,
             json.dumps(asr_options, sort_keys=True, ensure_ascii=False),
-            json.dumps(vad_options, sort_keys=True, ensure_ascii=False),
+            json.dumps(effective_vad_options, sort_keys=True, ensure_ascii=False),
         )
         if key in self.models:
             return self.models[key]
 
-        if device == "cuda":
+        if asr_device == "cuda" or resolved_vad_device == "cuda":
             self.clear_device_resources(device="cuda")
+
+        load_kwargs: Dict[str, Any] = {
+            "compute_type": compute_type,
+            "language": language,
+            "asr_options": asr_options,
+        }
+        if effective_vad_options:
+            load_kwargs["vad_options"] = effective_vad_options
+        if use_custom_vad:
+            load_kwargs["vad_model"] = self.get_vad_model(
+                resolved_vad_device, effective_vad_options
+            )
 
         model = whisperx.load_model(
             model_name,
-            device,
-            compute_type=compute_type,
-            language=language,
-            asr_options=asr_options,
-            vad_options=vad_options,
+            asr_device,
+            **load_kwargs,
         )
         self.models[key] = model
         return model
 
     def get_align_model(self, language: str, device: str) -> Tuple[Any, Dict[str, Any]]:
+        device = normalize_device(device)
         key = (language, device)
         if key in self.align_models:
             return self.align_models[key]
@@ -870,6 +953,8 @@ class WhisperXWorker:
                 if cached_key[1] != "cuda"
             }
             self.clear_device_resources(device="cuda")
+        elif device == "mps":
+            ensure_mps_available()
 
         model, metadata = whisperx.load_align_model(
             language_code=language,
@@ -887,11 +972,11 @@ class WhisperXWorker:
             "cuda_device_count": 0,
             "cuda_device_name": None,
             "cuda_compute_types": [],
+            "mps_built": False,
+            "mps_available": False,
         }
 
         try:
-            import torch
-
             payload["torch_version"] = str(getattr(torch, "__version__", ""))
             payload["torch_cuda_version"] = getattr(torch.version, "cuda", None)
             payload["cuda_available"] = bool(torch.cuda.is_available())
@@ -900,6 +985,10 @@ class WhisperXWorker:
                 payload["cuda_device_count"] = device_count
                 if device_count > 0:
                     payload["cuda_device_name"] = str(torch.cuda.get_device_name(0))
+            mps_backend = getattr(torch.backends, "mps", None)
+            if mps_backend is not None:
+                payload["mps_built"] = bool(mps_backend.is_built())
+                payload["mps_available"] = bool(mps_backend.is_available())
         except Exception as exc:  # pylint: disable=broad-except
             payload["torch_error"] = str(exc)
 
@@ -929,7 +1018,10 @@ class WhisperXWorker:
         model_name = str(params.get("model") or "small")
         language = params.get("language")
         language = str(language) if language else None
-        device = str(params.get("device") or "cpu")
+        device = normalize_device(params.get("device"), "cpu")
+        asr_device = normalize_device(params.get("asr_device"), device)
+        vad_device = normalize_device(params.get("vad_device"), asr_device)
+        align_device = normalize_device(params.get("align_device"), asr_device)
         compute_type = str(params.get("compute_type") or "int8")
         batch_size = int(params.get("batch_size") or 4)
         no_align = to_bool(params.get("no_align"), False)
@@ -949,11 +1041,12 @@ class WhisperXWorker:
         ):
             model = self.get_model(
                 model_name=model_name,
-                device=device,
+                asr_device=asr_device,
                 compute_type=compute_type,
                 language=language,
                 asr_options=asr_options,
                 vad_options=vad_options,
+                vad_device=vad_device,
             )
         model_logs.flush()
 
@@ -970,7 +1063,7 @@ class WhisperXWorker:
                 verbose=False,
             )
         transcribe_logs.flush()
-        if device == "cuda":
+        if asr_device == "cuda" or vad_device == "cuda":
             del model
             self.clear_device_resources(device="cuda")
 
@@ -980,7 +1073,9 @@ class WhisperXWorker:
         if not no_align and normalized_segments:
             emit_status(request_id, "aligning")
             emit_progress(request_id, 72)
-            align_model, align_metadata = self.get_align_model(detected_language, device)
+            align_model, align_metadata = self.get_align_model(
+                detected_language, align_device
+            )
             align_logs = ProgressLogStream(request_id)
             with contextlib.redirect_stdout(
                 align_logs
@@ -990,12 +1085,12 @@ class WhisperXWorker:
                     align_model,
                     align_metadata,
                     audio,
-                    device,
+                    align_device,
                     return_char_alignments=False,
                     print_progress=True,
                 )
             align_logs.flush()
-            if device == "cuda":
+            if align_device == "cuda":
                 del align_model
                 self.clear_device_resources(device="cuda")
             detected_language = str(aligned.get("language") or detected_language)
@@ -1026,7 +1121,11 @@ class WhisperXWorker:
                 "payload": payload,
             }
         )
-        if device == "cuda":
+        if (
+            asr_device == "cuda"
+            or vad_device == "cuda"
+            or align_device == "cuda"
+        ):
             self.clear_device_resources(device="cuda")
 
     def dispatch(self, message: Dict[str, Any]) -> None:

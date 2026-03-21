@@ -13,6 +13,8 @@ class WhisperXRuntimeProbe {
   final String whisperxVersion;
   final String? torchVersion;
   final String? torchCudaVersion;
+  final bool mpsBuilt;
+  final bool mpsAvailable;
   final bool cudaAvailable;
   final int cudaDeviceCount;
   final String? cudaDeviceName;
@@ -28,6 +30,8 @@ class WhisperXRuntimeProbe {
     required this.whisperxVersion,
     required this.torchVersion,
     required this.torchCudaVersion,
+    required this.mpsBuilt,
+    required this.mpsAvailable,
     required this.cudaAvailable,
     required this.cudaDeviceCount,
     required this.cudaDeviceName,
@@ -40,6 +44,7 @@ class WhisperXRuntimeProbe {
 
   bool get canUseCuda =>
       cudaAvailable && cudaDeviceCount > 0 && cudaComputeTypes.isNotEmpty;
+  bool get canUseMps => mpsBuilt && mpsAvailable;
 
   factory WhisperXRuntimeProbe.fromPayload(Map<String, dynamic> payload) {
     final List<String> computeTypes =
@@ -56,6 +61,8 @@ class WhisperXRuntimeProbe {
       whisperxVersion: (payload['whisperx_version'] as String? ?? '').trim(),
       torchVersion: (payload['torch_version'] as String?)?.trim(),
       torchCudaVersion: (payload['torch_cuda_version'] as String?)?.trim(),
+      mpsBuilt: payload['mps_built'] == true,
+      mpsAvailable: payload['mps_available'] == true,
       cudaAvailable: payload['cuda_available'] == true,
       cudaDeviceCount: (payload['cuda_device_count'] as num?)?.toInt() ?? 0,
       cudaDeviceName: (payload['cuda_device_name'] as String?)?.trim(),
@@ -323,6 +330,8 @@ class WhisperXSidecar {
     required String computeType,
     required int batchSize,
     required bool noAlign,
+    String? vadDevice,
+    String? alignDevice,
     Map<String, dynamic>? asrOptions,
     Map<String, dynamic>? vadOptions,
     Map<String, dynamic>? segmentationOptions,
@@ -335,10 +344,17 @@ class WhisperXSidecar {
       'model': modelName,
       'language': language,
       'device': device,
+      'asr_device': device,
       'compute_type': computeType,
       'batch_size': batchSize,
       'no_align': noAlign,
     };
+    if (vadDevice != null && vadDevice.trim().isNotEmpty) {
+      params['vad_device'] = vadDevice.trim();
+    }
+    if (alignDevice != null && alignDevice.trim().isNotEmpty) {
+      params['align_device'] = alignDevice.trim();
+    }
     if (asrOptions != null && asrOptions.isNotEmpty) {
       params['asr_options'] = asrOptions;
     }
