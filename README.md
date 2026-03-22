@@ -31,7 +31,7 @@
 # GPU加速
 macOS（Apple芯片）自动支持 GPU 加速。
 
-Windows 用户如果使用 nvidia 显卡则支持自动支持 GPU 加速。
+Windows 用户如果使用 nvidia 显卡则自动支持 GPU 加速。
 
 # 使用心得
 转录为日语特别优化，在 windows和 macOS 均支持 GPU 加速。

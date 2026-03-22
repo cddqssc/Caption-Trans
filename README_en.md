@@ -31,7 +31,7 @@ Please go to [Releases](https://github.com/cddqssc/Caption-Trans/releases) to do
 # GPU Acceleration
 macOS (Apple Silicon) automatically supports GPU acceleration.
 
-Windows users utilizing NVIDIA graphics cards automatically benefit from GPU acceleration support.
+Windows users with NVIDIA graphics cards automatically have GPU acceleration support.
 
 # Notes
 Transcription is especially optimized for Japanese, and GPU acceleration is supported on both Windows and macOS.
