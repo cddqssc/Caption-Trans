@@ -923,6 +923,9 @@ class WhisperXRuntime {
     final String torchIndexUrl = _resolveTorchIndexUrl(
       dependencyProfile.torchIndexUrl!,
     );
+    final List<String> torchInstallSourceArgs = _buildTorchInstallSourceArgs(
+      torchIndexUrl,
+    );
 
     await _runOrThrow(
       pythonExecutable,
@@ -933,8 +936,7 @@ class WhisperXRuntime {
         '--upgrade',
         'torch',
         'torchaudio',
-        '--index-url',
-        torchIndexUrl,
+        ...torchInstallSourceArgs,
       ],
       errorPrefix: dependencyProfile.prefersCuda
           ? 'Failed to install CUDA-enabled PyTorch runtime for WhisperX.'
@@ -965,6 +967,17 @@ class WhisperXRuntime {
       'https://download.pytorch.org/whl',
       'https://mirrors.aliyun.com/pytorch-wheels',
     );
+  }
+
+  List<String> _buildTorchInstallSourceArgs(String torchIndexUrl) {
+    if (_downloadSourceProfile != WhisperDownloadSource.mainlandChina) {
+      return <String>['--index-url', torchIndexUrl];
+    }
+
+    // Aliyun mirrors the wheel files, but pip may fail to resolve versions when
+    // treating it as a PEP 503 index. Using find-links works reliably with the
+    // mirrored wheel listing for torch/torchaudio on Windows.
+    return <String>['--no-index', '--find-links', '$torchIndexUrl/'];
   }
 
   Future<void> _runBestEffort(
