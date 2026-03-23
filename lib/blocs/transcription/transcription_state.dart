@@ -41,6 +41,7 @@ class RuntimePreparing extends TranscriptionState {
   final String fileName;
   final RuntimePreparingPhase phase;
   final double? progress;
+  final List<String> logLines;
   final WhisperRuntimeInfo? runtimeInfo;
 
   const RuntimePreparing({
@@ -48,6 +49,7 @@ class RuntimePreparing extends TranscriptionState {
     required this.fileName,
     this.phase = RuntimePreparingPhase.checkingRuntime,
     this.progress,
+    this.logLines = const <String>[],
     this.runtimeInfo,
   });
 
@@ -57,6 +59,7 @@ class RuntimePreparing extends TranscriptionState {
     fileName,
     phase,
     progress,
+    logLines,
     runtimeInfo,
   ];
 }

@@ -73,6 +73,7 @@ class WhisperService {
     String modelName, {
     void Function(int received, int total)? onDownloadProgress,
     void Function(String phase, double? progress)? onPreparationState,
+    void Function(String line)? onPreparationLog,
   }) async {
     _applyDownloadSourceProfile();
     final String? whisperxModel = modelMap[modelName];
@@ -91,6 +92,7 @@ class WhisperService {
           total > 0 ? received / total : null,
         );
       },
+      onBootstrapLog: onPreparationLog,
     );
   }
 

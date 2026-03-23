@@ -47,30 +47,55 @@ class TranscriptionBloc extends Bloc<TranscriptionEvent, TranscriptionState> {
 
     String wavPath = videoPath;
     WhisperRuntimeInfo? runtimeInfo;
+    RuntimePreparingPhase currentRuntimePhase =
+        RuntimePreparingPhase.checkingRuntime;
+    double? currentRuntimeProgress;
+    List<String> runtimeLogLines = const <String>[];
     List<String> currentLogLines = const <String>[];
     try {
+      void emitRuntimePreparingState({
+        required RuntimePreparingPhase phase,
+        double? progress,
+        String? logLine,
+      }) {
+        final String? normalized = logLine == null
+            ? null
+            : _normalizeLogLine(logLine);
+        if (normalized != null) {
+          runtimeLogLines = _appendRecentLogLines(runtimeLogLines, normalized);
+        }
+        currentRuntimePhase = phase;
+        currentRuntimeProgress = progress;
+        if (emit.isDone) return;
+        emit(
+          RuntimePreparing(
+            videoPath: videoPath,
+            fileName: fileName,
+            phase: phase,
+            progress: progress,
+            logLines: runtimeLogLines,
+            runtimeInfo: runtimeInfo,
+          ),
+        );
+      }
+
       // 1) Prepare runtime resources.
       // Only the download phase has determinate progress; install/start phases
       // stay in RuntimePreparing with translated status text.
-      emit(
-        RuntimePreparing(
-          videoPath: videoPath,
-          fileName: fileName,
-          phase: RuntimePreparingPhase.checkingRuntime,
-        ),
-      );
+      emitRuntimePreparingState(phase: RuntimePreparingPhase.checkingRuntime);
       await _whisperService.downloadModel(
         event.modelName,
         onPreparationState: (phase, progress) {
-          if (emit.isDone) return;
-          emit(
-            RuntimePreparing(
-              videoPath: videoPath,
-              fileName: fileName,
-              phase: _runtimePreparingPhaseFromCode(phase),
-              progress: progress,
-              runtimeInfo: runtimeInfo,
-            ),
+          emitRuntimePreparingState(
+            phase: _runtimePreparingPhaseFromCode(phase),
+            progress: progress,
+          );
+        },
+        onPreparationLog: (line) {
+          emitRuntimePreparingState(
+            phase: currentRuntimePhase,
+            progress: currentRuntimeProgress,
+            logLine: line,
           );
         },
       );
@@ -176,7 +201,9 @@ class TranscriptionBloc extends Bloc<TranscriptionEvent, TranscriptionState> {
           videoPath: videoPath,
           fileName: fileName,
           message: e.toString(),
-          logLines: currentLogLines,
+          logLines: currentLogLines.isNotEmpty
+              ? currentLogLines
+              : runtimeLogLines,
           runtimeInfo: runtimeInfo,
         ),
       );

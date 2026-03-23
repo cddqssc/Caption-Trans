@@ -191,19 +191,37 @@ class TranscriptionPanel extends StatelessWidget {
       final s = state as RuntimePreparing;
       final String label = _runtimePreparingLabel(l10n, s.phase);
       if (s.progress != null) {
-        return _buildProgressRow(
-          context,
-          icon: Icons.download_rounded,
-          label: label,
-          progress: s.progress,
-          color: Colors.blue,
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildProgressRow(
+              context,
+              icon: Icons.download_rounded,
+              label: label,
+              progress: s.progress,
+              color: Colors.blue,
+            ),
+            if (s.logLines.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              _buildLogPanel(context, s.logLines),
+            ],
+          ],
         );
       }
-      return _buildBusyRow(
-        context,
-        icon: Icons.settings_suggest_rounded,
-        label: label,
-        color: Colors.blue,
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildBusyRow(
+            context,
+            icon: Icons.settings_suggest_rounded,
+            label: label,
+            color: Colors.blue,
+          ),
+          if (s.logLines.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            _buildLogPanel(context, s.logLines),
+          ],
+        ],
       );
     }
 
@@ -374,27 +392,31 @@ class TranscriptionPanel extends StatelessWidget {
         _buildStatusRow(context, icon: icon, label: label, color: color),
         if (visibleLogLines.isNotEmpty) ...[
           const SizedBox(height: 10),
-          Container(
-            width: double.infinity,
-            constraints: const BoxConstraints(maxHeight: 132),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.04),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
-            ),
-            child: SingleChildScrollView(
-              child: Text(
-                visibleLogLines.join('\n'),
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Colors.white.withValues(alpha: 0.78),
-                  height: 1.35,
-                ),
-              ),
-            ),
-          ),
+          _buildLogPanel(context, visibleLogLines),
         ],
       ],
+    );
+  }
+
+  Widget _buildLogPanel(BuildContext context, List<String> logLines) {
+    return Container(
+      width: double.infinity,
+      constraints: const BoxConstraints(maxHeight: 132),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+      ),
+      child: SingleChildScrollView(
+        child: Text(
+          logLines.join('\n'),
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: Colors.white.withValues(alpha: 0.78),
+            height: 1.35,
+          ),
+        ),
+      ),
     );
   }
 

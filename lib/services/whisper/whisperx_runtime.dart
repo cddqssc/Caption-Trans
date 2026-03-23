@@ -131,6 +131,7 @@ class WhisperXRuntime {
     void Function(int percent)? onProgress,
     void Function(int received, int total)? onDownloadProgress,
     void Function(String phase)? onStatus,
+    void Function(String line)? onLog,
   }) async {
     onStatus?.call('checking_runtime');
     final _WhisperXDependencyProfile dependencyProfile =
@@ -158,6 +159,7 @@ class WhisperXRuntime {
       onProgress: onProgress,
       onDownloadProgress: onDownloadProgress,
       onStatus: onStatus,
+      onLog: onLog,
     );
     final Map<String, String> sidecarEnvironment =
         await _buildSidecarEnvironment(runtimeDir);
@@ -165,7 +167,7 @@ class WhisperXRuntime {
     onProgress?.call(62);
     final Directory venvDir = Directory(p.join(runtimeDir.path, 'venv'));
     onStatus?.call('creating_environment');
-    await _ensureVenv(venvDir, basePythonExecutable);
+    await _ensureVenv(venvDir, basePythonExecutable, onLog: onLog);
 
     final String venvPythonPath = _resolveVenvPython(venvDir);
     if (!File(venvPythonPath).existsSync()) {
@@ -181,6 +183,7 @@ class WhisperXRuntime {
         dependencyProfile: dependencyProfile,
         onProgress: onProgress,
         onStatus: onStatus,
+        onLog: onLog,
       );
       await marker.writeAsString(
         jsonEncode({
@@ -233,6 +236,7 @@ class WhisperXRuntime {
     void Function(int percent)? onProgress,
     void Function(int received, int total)? onDownloadProgress,
     void Function(String phase)? onStatus,
+    void Function(String line)? onLog,
   }) async {
     final _ManagedRuntimeSpec? managedSpec = await _loadManagedSpec();
     if (managedSpec != null) {
@@ -242,6 +246,7 @@ class WhisperXRuntime {
         onProgress: onProgress,
         onDownloadProgress: onDownloadProgress,
         onStatus: onStatus,
+        onLog: onLog,
       );
       if (File(managedPython).existsSync()) {
         return managedPython;
@@ -325,6 +330,7 @@ class WhisperXRuntime {
     void Function(int percent)? onProgress,
     void Function(int received, int total)? onDownloadProgress,
     void Function(String phase)? onStatus,
+    void Function(String line)? onLog,
   }) async {
     final Directory managedDir = Directory(
       p.join(runtimeDir.path, 'managed_python_${spec.id}'),
@@ -336,6 +342,7 @@ class WhisperXRuntime {
         File(pythonPath).existsSync() &&
         await _isManagedRuntimeValid(marker, spec)) {
       if (await _canExecutePython(pythonPath)) {
+        onLog?.call('Using cached managed Python runtime: $pythonPath');
         onProgress?.call(55);
         return pythonPath;
       }
@@ -358,6 +365,7 @@ class WhisperXRuntime {
       await _downloadManagedRuntime(
         spec.url,
         archiveFile,
+        onLog: onLog,
         onProgress: (received, total) {
           onDownloadProgress?.call(received, total);
           if (total > 0) {
@@ -646,6 +654,7 @@ class WhisperXRuntime {
   Future<void> _downloadManagedRuntime(
     Uri officialUrl,
     File output, {
+    void Function(String line)? onLog,
     void Function(int received, int total)? onProgress,
   }) async {
     final List<Uri> candidates = _buildManagedRuntimeCandidates(officialUrl);
@@ -657,9 +666,11 @@ class WhisperXRuntime {
       }
 
       try {
+        onLog?.call('Downloading managed runtime from $candidate');
         await _downloadFile(candidate, output, onProgress: onProgress);
         return;
       } catch (error) {
+        onLog?.call('Managed runtime download failed from $candidate: $error');
         failures.add('$candidate -> $error');
       }
     }
@@ -812,23 +823,19 @@ class WhisperXRuntime {
 
   Future<void> _ensureVenv(
     Directory venvDir,
-    String basePythonExecutable,
-  ) async {
+    String basePythonExecutable, {
+    void Function(String line)? onLog,
+  }) async {
     if (venvDir.existsSync()) {
+      onLog?.call('Using cached Python environment: ${venvDir.path}');
       return;
     }
-
-    final result = await Process.run(basePythonExecutable, [
-      '-m',
-      'venv',
-      venvDir.path,
-    ]);
-    if (result.exitCode != 0) {
-      throw Exception(
-        'Failed to create Python venv.\n'
-        '${result.stdout}\n${result.stderr}',
-      );
-    }
+    await _runOrThrow(
+      basePythonExecutable,
+      ['-m', 'venv', venvDir.path],
+      errorPrefix: 'Failed to create Python venv.',
+      onLog: onLog,
+    );
   }
 
   String _resolveVenvPython(Directory venvDir) {
@@ -862,6 +869,7 @@ class WhisperXRuntime {
     required _WhisperXDependencyProfile dependencyProfile,
     void Function(int percent)? onProgress,
     void Function(String phase)? onStatus,
+    void Function(String line)? onLog,
   }) async {
     onStatus?.call('installing_dependencies');
     onProgress?.call(78);
@@ -872,9 +880,11 @@ class WhisperXRuntime {
       ['-m', 'pip', 'install', '--upgrade', 'pip', ...pipIndexArgs],
       errorPrefix: 'Failed to upgrade pip for WhisperX runtime.',
       environment: pipEnvironment,
+      onLog: onLog,
     );
 
     onProgress?.call(84);
+    onLog?.call('Installing WhisperX and runtime dependencies...');
     await _runOrThrow(
       pythonExecutable,
       [
@@ -887,6 +897,7 @@ class WhisperXRuntime {
       ],
       errorPrefix: 'Failed to install WhisperX runtime dependencies.',
       environment: pipEnvironment,
+      onLog: onLog,
     );
 
     if (Platform.isWindows && dependencyProfile.torchIndexUrl != null) {
@@ -899,6 +910,7 @@ class WhisperXRuntime {
         pythonExecutable,
         dependencyProfile: dependencyProfile,
         environment: pipEnvironment,
+        onLog: onLog,
       );
     }
 
@@ -909,6 +921,7 @@ class WhisperXRuntime {
     String pythonExecutable, {
     required _WhisperXDependencyProfile dependencyProfile,
     required Map<String, String> environment,
+    void Function(String line)? onLog,
   }) async {
     await _runBestEffort(pythonExecutable, [
       '-m',
@@ -926,6 +939,7 @@ class WhisperXRuntime {
     final List<String> torchInstallSourceArgs = _buildTorchInstallSourceArgs(
       torchIndexUrl,
     );
+    onLog?.call('Installing PyTorch runtime from $torchIndexUrl');
 
     await _runOrThrow(
       pythonExecutable,
@@ -942,11 +956,16 @@ class WhisperXRuntime {
           ? 'Failed to install CUDA-enabled PyTorch runtime for WhisperX.'
           : 'Failed to install CPU PyTorch runtime for WhisperX.',
       environment: environment,
+      onLog: onLog,
     );
   }
 
   Map<String, String> _buildPipEnvironment() {
-    return <String, String>{'PIP_DISABLE_PIP_VERSION_CHECK': '1'};
+    return <String, String>{
+      'PIP_DISABLE_PIP_VERSION_CHECK': '1',
+      'PIP_PROGRESS_BAR': 'off',
+      'PYTHONUNBUFFERED': '1',
+    };
   }
 
   List<String> _buildPipIndexArgs() {
@@ -997,19 +1016,51 @@ class WhisperXRuntime {
     List<String> args, {
     required String errorPrefix,
     Map<String, String>? environment,
+    void Function(String line)? onLog,
   }) async {
-    final result = await Process.run(
+    onLog?.call('Running: $executable ${args.join(' ')}');
+    final Process process = await Process.start(
       executable,
       args,
       environment: environment,
+      runInShell: false,
     );
-    if (result.exitCode == 0) {
+    final StringBuffer stdoutBuffer = StringBuffer();
+    final StringBuffer stderrBuffer = StringBuffer();
+    final Future<void> stdoutDone = _pumpProcessStream(
+      process.stdout,
+      stdoutBuffer,
+      onLog: onLog,
+    );
+    final Future<void> stderrDone = _pumpProcessStream(
+      process.stderr,
+      stderrBuffer,
+      onLog: onLog,
+    );
+    final int exitCode = await process.exitCode;
+    await Future.wait(<Future<void>>[stdoutDone, stderrDone]);
+    if (exitCode == 0) {
       return;
     }
 
     throw Exception(
       '$errorPrefix\nCommand: $executable ${args.join(' ')}\n'
-      'STDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}',
+      'STDOUT:\n${stdoutBuffer.toString()}\nSTDERR:\n${stderrBuffer.toString()}',
     );
+  }
+
+  Future<void> _pumpProcessStream(
+    Stream<List<int>> stream,
+    StringBuffer output, {
+    void Function(String line)? onLog,
+  }) async {
+    await for (final String line
+        in stream.transform(utf8.decoder).transform(const LineSplitter())) {
+      final String trimmed = line.trimRight();
+      output.writeln(trimmed);
+      if (trimmed.isNotEmpty) {
+        onLog?.call(trimmed);
+      }
+    }
   }
 }

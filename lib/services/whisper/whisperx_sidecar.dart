@@ -117,6 +117,7 @@ class WhisperXSidecar {
     void Function(int percent)? onBootstrapProgress,
     void Function(int received, int total)? onRuntimeDownloadProgress,
     void Function(String phase)? onBootstrapStatus,
+    void Function(String line)? onBootstrapLog,
   }) async {
     final String desiredProfileId = await WhisperXRuntime.instance
         .resolveCurrentStartupProfileId();
@@ -141,6 +142,7 @@ class WhisperXSidecar {
       onBootstrapProgress: onBootstrapProgress,
       onRuntimeDownloadProgress: onRuntimeDownloadProgress,
       onBootstrapStatus: onBootstrapStatus,
+      onBootstrapLog: onBootstrapLog,
     );
     try {
       await _startFuture;
@@ -154,11 +156,13 @@ class WhisperXSidecar {
     void Function(int percent)? onBootstrapProgress,
     void Function(int received, int total)? onRuntimeDownloadProgress,
     void Function(String phase)? onBootstrapStatus,
+    void Function(String line)? onBootstrapLog,
   }) async {
     final WhisperXRuntimeInfo info = await WhisperXRuntime.instance.ensureReady(
       onProgress: onBootstrapProgress,
       onDownloadProgress: onRuntimeDownloadProgress,
       onStatus: onBootstrapStatus,
+      onLog: onBootstrapLog,
     );
 
     _readyCompleter = Completer<void>();
