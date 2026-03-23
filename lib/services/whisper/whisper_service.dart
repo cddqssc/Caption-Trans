@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
@@ -10,7 +12,10 @@ import '../../models/transcription_result.dart';
 import '../../models/whisper_runtime_info.dart';
 import '../audio/media_to_wav_converter.dart';
 
-/// Maps user-facing model names to sherpa-onnx release archive specs.
+// ---------------------------------------------------------------------------
+// Model spec
+// ---------------------------------------------------------------------------
+
 class _SherpaModelSpec {
   final String archiveName;
   final String filePrefix;
@@ -27,7 +32,146 @@ class _SherpaModelSpec {
   String get tokensFile => '$filePrefix-tokens.txt';
 }
 
+// ---------------------------------------------------------------------------
+// Messages exchanged between main isolate and worker isolate
+// ---------------------------------------------------------------------------
+
+class _LoadModelRequest {
+  final String encoderPath;
+  final String decoderPath;
+  final String tokensPath;
+  final String language;
+  final int featureDim;
+  final int numThreads;
+
+  const _LoadModelRequest({
+    required this.encoderPath,
+    required this.decoderPath,
+    required this.tokensPath,
+    required this.language,
+    required this.featureDim,
+    required this.numThreads,
+  });
+}
+
+class _TranscribeRequest {
+  final String wavPath;
+  const _TranscribeRequest({required this.wavPath});
+}
+
+class _TranscribeResult {
+  final String text;
+  final List<String> tokens;
+  final List<double> timestamps;
+  final int audioDurationMs;
+
+  const _TranscribeResult({
+    required this.text,
+    required this.tokens,
+    required this.timestamps,
+    required this.audioDurationMs,
+  });
+}
+
+class _ErrorResult {
+  final String message;
+  const _ErrorResult(this.message);
+}
+
+// Sentinel to signal "model loaded OK"
+class _LoadedResult {
+  const _LoadedResult();
+}
+
+// Sentinel to request shutdown
+class _ShutdownRequest {
+  const _ShutdownRequest();
+}
+
+// ---------------------------------------------------------------------------
+// Worker isolate entry point
+// ---------------------------------------------------------------------------
+
+void _workerEntryPoint(SendPort mainSendPort) {
+  sherpa.initBindings();
+  final ReceivePort workerReceive = ReceivePort();
+  mainSendPort.send(workerReceive.sendPort);
+
+  sherpa.OfflineRecognizer? recognizer;
+
+  workerReceive.listen((message) {
+    if (message is _LoadModelRequest) {
+      try {
+        recognizer?.free();
+        recognizer = null;
+
+        final config = sherpa.OfflineRecognizerConfig(
+          feat: sherpa.FeatureConfig(
+            sampleRate: 16000,
+            featureDim: message.featureDim,
+          ),
+          model: sherpa.OfflineModelConfig(
+            whisper: sherpa.OfflineWhisperModelConfig(
+              encoder: message.encoderPath,
+              decoder: message.decoderPath,
+              language: message.language,
+              task: 'transcribe',
+              tailPaddings: 500,
+              enableTokenTimestamps: true,
+            ),
+            tokens: message.tokensPath,
+            numThreads: message.numThreads,
+            provider: 'cpu',
+            debug: false,
+          ),
+        );
+        recognizer = sherpa.OfflineRecognizer(config);
+        mainSendPort.send(const _LoadedResult());
+      } catch (e) {
+        mainSendPort.send(_ErrorResult('Failed to load model: $e'));
+      }
+    } else if (message is _TranscribeRequest) {
+      try {
+        if (recognizer == null) {
+          mainSendPort.send(const _ErrorResult('No model loaded in worker.'));
+          return;
+        }
+        final waveData = sherpa.readWave(message.wavPath);
+        final stream = recognizer!.createStream();
+        stream.acceptWaveform(
+          samples: waveData.samples,
+          sampleRate: waveData.sampleRate,
+        );
+        recognizer!.decode(stream);
+        final result = recognizer!.getResult(stream);
+
+        mainSendPort.send(_TranscribeResult(
+          text: result.text,
+          tokens: List<String>.from(result.tokens),
+          timestamps: List<double>.from(result.timestamps),
+          audioDurationMs:
+              (waveData.samples.length / waveData.sampleRate * 1000).round(),
+        ));
+        stream.free();
+      } catch (e) {
+        mainSendPort.send(_ErrorResult('Transcription failed: $e'));
+      }
+    } else if (message is _ShutdownRequest) {
+      recognizer?.free();
+      recognizer = null;
+      workerReceive.close();
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// WhisperService  (main isolate)
+// ---------------------------------------------------------------------------
+
 /// Service for transcribing media using Whisper through sherpa-onnx.
+///
+/// Heavy work (model loading, inference) runs on a persistent background
+/// isolate so the UI thread stays responsive.
 class WhisperService {
   static const Map<String, _SherpaModelSpec> _modelSpecs = {
     'tiny': _SherpaModelSpec(
@@ -60,15 +204,63 @@ class WhisperService {
 
   static const String _modelsReleasesBaseUrl =
       'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models';
+  static const String _readyMarker = '.model_ready';
 
   final MediaToWavConverter _wavConverter = MediaToWavConverter();
 
   String? _currentModelName;
   String? _currentLanguage;
-  sherpa.OfflineRecognizer? _recognizer;
   int _numThreads = 4;
 
-  /// Ensure model files are downloaded locally.
+  // Worker isolate state
+  Isolate? _workerIsolate;
+  SendPort? _workerSendPort;
+  ReceivePort? _mainReceivePort;
+  StreamSubscription<dynamic>? _workerSubscription;
+  Completer<dynamic>? _pendingResponse;
+
+  // ------------------------------------------------------------------
+  // Worker isolate lifecycle
+  // ------------------------------------------------------------------
+
+  Future<void> _ensureWorkerStarted() async {
+    if (_workerSendPort != null) return;
+
+    final completer = Completer<SendPort>();
+    _mainReceivePort = ReceivePort();
+
+    _workerSubscription = _mainReceivePort!.listen((message) {
+      if (message is SendPort) {
+        completer.complete(message);
+      } else {
+        _pendingResponse?.complete(message);
+        _pendingResponse = null;
+      }
+    });
+
+    _workerIsolate = await Isolate.spawn(
+      _workerEntryPoint,
+      _mainReceivePort!.sendPort,
+    );
+
+    _workerSendPort = await completer.future;
+  }
+
+  Future<T> _sendToWorker<T>(Object request) async {
+    await _ensureWorkerStarted();
+    _pendingResponse = Completer<dynamic>();
+    _workerSendPort!.send(request);
+    final result = await _pendingResponse!.future;
+    if (result is _ErrorResult) {
+      throw Exception(result.message);
+    }
+    return result as T;
+  }
+
+  // ------------------------------------------------------------------
+  // Download
+  // ------------------------------------------------------------------
+
   Future<void> downloadModel(
     String modelName, {
     void Function(int received, int total)? onDownloadProgress,
@@ -82,14 +274,11 @@ class WhisperService {
     onPreparationState?.call('checking_model', null);
     final Directory modelDir = await _resolveModelDir(spec);
 
-    // Check if already downloaded
-    final bool ready = await _isModelReady(modelDir, spec);
-    if (ready) {
+    if (await _isModelReady(modelDir, spec)) {
       onPreparationState?.call('model_ready', 1.0);
       return;
     }
 
-    // Download the tar.bz2 archive
     onPreparationState?.call('downloading_model', 0.0);
     final String archiveUrl =
         '$_modelsReleasesBaseUrl/${spec.archiveName}.tar.bz2';
@@ -111,14 +300,11 @@ class WhisperService {
         },
       );
 
-      // Extract archive
       onPreparationState?.call('extracting_model', null);
-      // Remove incomplete model dir from prior failed attempt
       if (modelDir.existsSync()) {
         await modelDir.delete(recursive: true);
       }
       await _extractTarBz2(archiveFile, modelDir.parent);
-      // Mark extraction as complete
       await File(p.join(modelDir.path, _readyMarker)).writeAsString('');
 
       onPreparationState?.call('model_ready', 1.0);
@@ -131,10 +317,10 @@ class WhisperService {
     }
   }
 
-  /// Load a model, creating the OfflineRecognizer.
-  ///
-  /// If [language] is provided (e.g. 'en', 'ja'), it's passed to Whisper
-  /// to skip auto-detection. Changing language requires reloading the model.
+  // ------------------------------------------------------------------
+  // Load model (in worker isolate)
+  // ------------------------------------------------------------------
+
   Future<void> loadModel(String modelName, {String? language}) async {
     final _SherpaModelSpec? spec = _modelSpecs[modelName];
     if (spec == null) {
@@ -142,17 +328,9 @@ class WhisperService {
     }
 
     final String langCode = _normalizeLanguage(language);
-    if (_currentModelName == modelName &&
-        _currentLanguage == langCode &&
-        _recognizer != null) {
+    if (_currentModelName == modelName && _currentLanguage == langCode) {
       return;
     }
-
-    // Dispose previous recognizer
-    _recognizer?.free();
-    _recognizer = null;
-    _currentModelName = null;
-    _currentLanguage = null;
 
     final Directory modelDir = await _resolveModelDir(spec);
     if (!await _isModelReady(modelDir, spec)) {
@@ -162,92 +340,68 @@ class WhisperService {
     }
 
     _numThreads = _selectThreadCount();
-    final String encoderPath = p.join(modelDir.path, spec.encoderFile);
-    final String decoderPath = p.join(modelDir.path, spec.decoderFile);
-    final String tokensPath = p.join(modelDir.path, spec.tokensFile);
 
-    final sherpa.OfflineRecognizerConfig config =
-        sherpa.OfflineRecognizerConfig(
-      feat: sherpa.FeatureConfig(
-        sampleRate: 16000,
-        featureDim: spec.featureDim,
-      ),
-      model: sherpa.OfflineModelConfig(
-        whisper: sherpa.OfflineWhisperModelConfig(
-          encoder: encoderPath,
-          decoder: decoderPath,
-          language: langCode,
-          task: 'transcribe',
-          tailPaddings: 500,
-          enableTokenTimestamps: true,
-        ),
-        tokens: tokensPath,
-        numThreads: _numThreads,
-        provider: 'cpu',
-        debug: false,
-      ),
-    );
+    await _sendToWorker<_LoadedResult>(_LoadModelRequest(
+      encoderPath: p.join(modelDir.path, spec.encoderFile),
+      decoderPath: p.join(modelDir.path, spec.decoderFile),
+      tokensPath: p.join(modelDir.path, spec.tokensFile),
+      language: langCode,
+      featureDim: spec.featureDim,
+      numThreads: _numThreads,
+    ));
 
-    _recognizer = sherpa.OfflineRecognizer(config);
     _currentModelName = modelName;
     _currentLanguage = langCode;
   }
 
-  /// Convert input media into WAV.
+  // ------------------------------------------------------------------
+  // Transcode
+  // ------------------------------------------------------------------
+
   Future<String> transcodeToWav(String mediaPath) {
     return _wavConverter.ensureWav(mediaPath);
   }
 
-  /// Transcribe a WAV file using the loaded model.
+  // ------------------------------------------------------------------
+  // Transcribe (in worker isolate)
+  // ------------------------------------------------------------------
+
   Future<TranscriptionResult> transcribeWav(
     String wavPath, {
     String language = 'auto',
     void Function(String status, String? detail)? onStatus,
     void Function(WhisperRuntimeInfo info)? onRuntimeInfo,
   }) async {
-    final sherpa.OfflineRecognizer? recognizer = _recognizer;
-    if (recognizer == null) {
+    if (_currentModelName == null) {
       throw StateError('No model loaded. Call loadModel() first.');
     }
 
     onRuntimeInfo?.call(_buildRuntimeInfo());
     onStatus?.call('loading_audio', null);
 
-    // Read WAV file
-    final sherpa.WaveData waveData = sherpa.readWave(wavPath);
+    // Yield so the UI can paint before we await the worker
+    await Future<void>.delayed(Duration.zero);
 
     onStatus?.call('transcribing', null);
 
-    // Create stream and feed audio
-    final sherpa.OfflineStream stream = recognizer.createStream();
-    stream.acceptWaveform(
-      samples: waveData.samples,
-      sampleRate: waveData.sampleRate,
+    final _TranscribeResult result = await _sendToWorker<_TranscribeResult>(
+      _TranscribeRequest(wavPath: wavPath),
     );
-    recognizer.decode(stream);
-
-    final sherpa.OfflineRecognizerResult result = recognizer.getResult(stream);
-
-    // Extract data before freeing
-    final String text = result.text;
-    final List<String> tokens = List<String>.from(result.tokens);
-    final List<double> timestamps = List<double>.from(result.timestamps);
-
-    stream.free();
 
     onStatus?.call('finalizing', null);
 
     return _parseResult(
-      text: text,
-      tokens: tokens,
-      timestamps: timestamps,
-      audioDuration: Duration(
-        milliseconds:
-            (waveData.samples.length / waveData.sampleRate * 1000).round(),
-      ),
+      text: result.text,
+      tokens: result.tokens,
+      timestamps: result.timestamps,
+      audioDuration: Duration(milliseconds: result.audioDurationMs),
       requestedLanguage: language,
     );
   }
+
+  // ------------------------------------------------------------------
+  // Helpers
+  // ------------------------------------------------------------------
 
   WhisperRuntimeInfo inspectRuntime({required String modelName}) {
     return _buildRuntimeInfo();
@@ -278,8 +432,6 @@ class WhisperService {
     );
   }
 
-  static const String _readyMarker = '.model_ready';
-
   Future<bool> _isModelReady(
     Directory modelDir,
     _SherpaModelSpec spec,
@@ -305,7 +457,6 @@ class WhisperService {
       final HttpClientRequest request = await client.getUrl(url);
       HttpClientResponse response = await request.close();
 
-      // Follow redirects manually (GitHub releases redirect)
       int redirectCount = 0;
       while (response.isRedirect && redirectCount < 10) {
         final String? location = response.headers.value('location');
@@ -341,7 +492,6 @@ class WhisperService {
 
   Future<void> _extractTarBz2(File archiveFile, Directory destination) async {
     await destination.create(recursive: true);
-    // Use system tar command which handles tar.bz2 natively
     final ProcessResult result = await Process.run(
       'tar',
       ['xjf', archiveFile.path, '-C', destination.path],
@@ -388,7 +538,6 @@ class WhisperService {
     if (timestamps.isNotEmpty && tokens.isNotEmpty) {
       segments = _buildSegmentsFromTokens(tokens, timestamps, audioDuration);
     } else {
-      // Fallback: single segment with full audio duration
       segments = [
         SubtitleSegment(
           index: 1,
@@ -422,7 +571,9 @@ class WhisperService {
     const double maxSegmentDuration = 8.0;
     const int maxSegmentChars = 80;
     const double pauseThreshold = 0.8;
-    const Set<String> sentenceEnders = {'.', '!', '?', '\u3002', '\uff01', '\uff1f'};
+    const Set<String> sentenceEnders = {
+      '.', '!', '?', '\u3002', '\uff01', '\uff1f',
+    };
 
     for (int i = 0; i < tokens.length; i++) {
       final String token = tokens[i];
@@ -436,7 +587,6 @@ class WhisperService {
       final double segmentDuration = tokenStart - segmentStart;
       final String trimmedCurrent = currentText.toString().trim();
 
-      // Decide if we should split before this token
       bool shouldSplit = false;
       if (trimmedCurrent.isNotEmpty) {
         if (gap >= pauseThreshold) {
@@ -444,8 +594,8 @@ class WhisperService {
         } else if (segmentDuration >= maxSegmentDuration) {
           shouldSplit = true;
         } else if (currentText.length >= maxSegmentChars &&
-            trimmedCurrent.isNotEmpty &&
-            sentenceEnders.contains(trimmedCurrent[trimmedCurrent.length - 1])) {
+            sentenceEnders
+                .contains(trimmedCurrent[trimmedCurrent.length - 1])) {
           shouldSplit = true;
         }
       }
@@ -465,7 +615,6 @@ class WhisperService {
       lastEnd = tokenEnd;
     }
 
-    // Flush remaining text
     final String remaining = currentText.toString().trim();
     if (remaining.isNotEmpty) {
       segments.add(SubtitleSegment(
@@ -488,8 +637,17 @@ class WhisperService {
   String? get loadedModelName => _currentModelName;
 
   Future<void> dispose() async {
-    _recognizer?.free();
-    _recognizer = null;
+    if (_workerSendPort != null) {
+      _workerSendPort!.send(const _ShutdownRequest());
+    }
+    await _workerSubscription?.cancel();
+    _mainReceivePort?.close();
+    _workerIsolate?.kill(priority: Isolate.beforeNextEvent);
+    _workerIsolate = null;
+    _workerSendPort = null;
+    _mainReceivePort = null;
+    _workerSubscription = null;
+    _pendingResponse = null;
     _currentModelName = null;
     _currentLanguage = null;
   }
