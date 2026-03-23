@@ -3,27 +3,13 @@ import 'package:equatable/equatable.dart';
 class WhisperRuntimeInfo extends Equatable {
   final String modeLabel;
   final String? deviceName;
-  final String computeType;
-  final int batchSize;
-  final bool usingGpu;
-  final bool cudaAvailable;
-  final String? torchCudaVersion;
-  final int? logicalCpuCount;
-  final int? physicalCpuCount;
-  final int? recommendedCpuThreads;
+  final int numThreads;
   final String? note;
 
   const WhisperRuntimeInfo({
     required this.modeLabel,
-    required this.deviceName,
-    required this.computeType,
-    required this.batchSize,
-    required this.usingGpu,
-    required this.cudaAvailable,
-    required this.torchCudaVersion,
-    required this.logicalCpuCount,
-    required this.physicalCpuCount,
-    required this.recommendedCpuThreads,
+    this.deviceName,
+    this.numThreads = 4,
     this.note,
   });
 
@@ -32,13 +18,7 @@ class WhisperRuntimeInfo extends Equatable {
       modeLabel,
       if (deviceName != null && deviceName!.trim().isNotEmpty)
         deviceName!.trim(),
-      'compute=$computeType',
-      'batch=$batchSize',
-      if (physicalCpuCount != null) 'physical CPU $physicalCpuCount',
-      if (logicalCpuCount != null) 'logical CPU $logicalCpuCount',
-      if (recommendedCpuThreads != null) 'threads=$recommendedCpuThreads',
-      if (torchCudaVersion != null && torchCudaVersion!.trim().isNotEmpty)
-        'torch CUDA ${torchCudaVersion!.trim()}',
+      'threads=$numThreads',
     ];
     return parts.join(' | ');
   }
@@ -47,14 +27,7 @@ class WhisperRuntimeInfo extends Equatable {
   List<Object?> get props => <Object?>[
     modeLabel,
     deviceName,
-    computeType,
-    batchSize,
-    usingGpu,
-    cudaAvailable,
-    torchCudaVersion,
-    logicalCpuCount,
-    physicalCpuCount,
-    recommendedCpuThreads,
+    numThreads,
     note,
   ];
 }

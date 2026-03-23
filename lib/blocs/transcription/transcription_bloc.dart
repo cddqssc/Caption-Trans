@@ -8,10 +8,6 @@ import 'transcription_state.dart';
 
 /// BLoC managing the transcription workflow.
 class TranscriptionBloc extends Bloc<TranscriptionEvent, TranscriptionState> {
-  static final RegExp _ansiEscapePattern = RegExp(
-    r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])',
-  );
-
   final WhisperService _whisperService;
 
   TranscriptionBloc({WhisperService? whisperService})
@@ -43,14 +39,12 @@ class TranscriptionBloc extends Bloc<TranscriptionEvent, TranscriptionState> {
     String wavPath = videoPath;
     WhisperRuntimeInfo? runtimeInfo;
     try {
-      // 1) Prepare runtime resources.
-      // Only the download phase has determinate progress; install/start phases
-      // stay in RuntimePreparing with translated status text.
+      // 1) Download model if needed.
       emit(
-        RuntimePreparing(
+        ModelPreparing(
           videoPath: videoPath,
           fileName: fileName,
-          phase: RuntimePreparingPhase.checkingRuntime,
+          phase: ModelPreparingPhase.checkingModel,
         ),
       );
       await _whisperService.downloadModel(
@@ -58,24 +52,30 @@ class TranscriptionBloc extends Bloc<TranscriptionEvent, TranscriptionState> {
         onPreparationState: (phase, progress) {
           if (emit.isDone) return;
           emit(
-            RuntimePreparing(
+            ModelPreparing(
               videoPath: videoPath,
               fileName: fileName,
-              phase: _runtimePreparingPhaseFromCode(phase),
+              phase: _modelPreparingPhaseFromCode(phase),
               progress: progress,
-              runtimeInfo: runtimeInfo,
             ),
           );
         },
       );
 
-      // 2) Select model for this run (actual model load happens in transcribe).
-      await _whisperService.loadModel(event.modelName);
-      runtimeInfo = await _whisperService.inspectRuntime(
+      // 2) Load model.
+      emit(
+        ModelPreparing(
+          videoPath: videoPath,
+          fileName: fileName,
+          phase: ModelPreparingPhase.loadingModel,
+        ),
+      );
+      await _whisperService.loadModel(event.modelName, language: event.language);
+      runtimeInfo = _whisperService.inspectRuntime(
         modelName: event.modelName,
       );
 
-      // 3) Transcode media to WAV (no progress)
+      // 3) Transcode media to WAV.
       emit(
         AudioTranscoding(
           videoPath: videoPath,
@@ -85,44 +85,12 @@ class TranscriptionBloc extends Bloc<TranscriptionEvent, TranscriptionState> {
       );
       wavPath = await _whisperService.transcodeToWav(videoPath);
 
-      // 4) Transcribe with explicit sidecar phases + runtime logs.
-      TranscribingPhase currentPhase = TranscribingPhase.preparingModel;
-      String? currentDetail;
-      void emitTranscribingState({
-        required TranscribingPhase phase,
-        String? detail,
-        WhisperRuntimeInfo? nextRuntimeInfo,
-      }) {
-        final String? normalized = detail == null
-            ? null
-            : _normalizeLogLine(detail);
-        final WhisperRuntimeInfo? resolvedRuntimeInfo =
-            nextRuntimeInfo ?? runtimeInfo;
-        if (currentPhase == phase &&
-            currentDetail == normalized &&
-            runtimeInfo == resolvedRuntimeInfo) {
-          return;
-        }
-        currentPhase = phase;
-        currentDetail = normalized;
-        runtimeInfo = resolvedRuntimeInfo;
-        if (emit.isDone) return;
-        emit(
-          Transcribing(
-            videoPath: videoPath,
-            fileName: fileName,
-            phase: phase,
-            statusDetail: normalized,
-            runtimeInfo: runtimeInfo,
-          ),
-        );
-      }
-
+      // 4) Transcribe.
       emit(
         Transcribing(
           videoPath: videoPath,
           fileName: fileName,
-          phase: currentPhase,
+          phase: TranscribingPhase.transcribing,
           runtimeInfo: runtimeInfo,
         ),
       );
@@ -130,22 +98,20 @@ class TranscriptionBloc extends Bloc<TranscriptionEvent, TranscriptionState> {
         wavPath,
         language: event.language ?? 'auto',
         onRuntimeInfo: (info) {
-          emitTranscribingState(
-            phase: currentPhase,
-            detail: currentDetail,
-            nextRuntimeInfo: info,
-          );
+          runtimeInfo = info;
         },
         onStatus: (status, detail) {
-          final TranscribingPhase phase = _phaseFromWorkerStatus(status);
-          emitTranscribingState(phase: phase, detail: detail);
-        },
-        onLog: (line) {
-          final String? normalized = _normalizeLogLine(line);
-          if (normalized == null) return;
-          final TranscribingPhase phase =
-              _phaseFromLogLine(normalized) ?? currentPhase;
-          emitTranscribingState(phase: phase, detail: normalized);
+          if (emit.isDone) return;
+          final TranscribingPhase phase = _phaseFromStatus(status);
+          emit(
+            Transcribing(
+              videoPath: videoPath,
+              fileName: fileName,
+              phase: phase,
+              statusDetail: detail,
+              runtimeInfo: runtimeInfo,
+            ),
+          );
         },
       );
 
@@ -174,66 +140,31 @@ class TranscriptionBloc extends Bloc<TranscriptionEvent, TranscriptionState> {
     }
   }
 
-  String? _normalizeLogLine(String line) {
-    final String trimmed = line.replaceAll(_ansiEscapePattern, '').trim();
-    if (trimmed.isEmpty) return null;
-    // WhisperX/PyTorch logs can be very long; keep status concise in UI.
-    return trimmed.length > 140 ? '${trimmed.substring(0, 140)}...' : trimmed;
-  }
-
-  RuntimePreparingPhase _runtimePreparingPhaseFromCode(String phase) {
+  ModelPreparingPhase _modelPreparingPhaseFromCode(String phase) {
     switch (phase) {
-      case 'downloading_runtime':
-        return RuntimePreparingPhase.downloadingRuntime;
-      case 'extracting_runtime':
-        return RuntimePreparingPhase.extractingRuntime;
-      case 'creating_environment':
-        return RuntimePreparingPhase.creatingEnvironment;
-      case 'installing_dependencies':
-        return RuntimePreparingPhase.installingDependencies;
-      case 'starting_sidecar':
-        return RuntimePreparingPhase.startingSidecar;
-      case 'checking_runtime':
+      case 'downloading_model':
+        return ModelPreparingPhase.downloadingModel;
+      case 'extracting_model':
+        return ModelPreparingPhase.extractingModel;
+      case 'model_ready':
+        return ModelPreparingPhase.loadingModel;
+      case 'checking_model':
       default:
-        return RuntimePreparingPhase.checkingRuntime;
+        return ModelPreparingPhase.checkingModel;
     }
   }
 
-  TranscribingPhase _phaseFromWorkerStatus(String status) {
+  TranscribingPhase _phaseFromStatus(String status) {
     switch (status) {
       case 'loading_audio':
         return TranscribingPhase.loadingAudio;
-      case 'preparing_model':
-        return TranscribingPhase.preparingModel;
       case 'transcribing':
         return TranscribingPhase.transcribing;
-      case 'aligning':
-        return TranscribingPhase.aligning;
       case 'finalizing':
         return TranscribingPhase.finalizing;
       default:
         return TranscribingPhase.transcribing;
     }
-  }
-
-  TranscribingPhase? _phaseFromLogLine(String line) {
-    final String lower = line.toLowerCase();
-    if (lower.contains('download')) {
-      return TranscribingPhase.preparingModel;
-    }
-    if (lower.contains('align')) {
-      return TranscribingPhase.aligning;
-    }
-    if (lower.contains('transcrib')) {
-      return TranscribingPhase.transcribing;
-    }
-    if (lower.contains('model') || lower.contains('loading')) {
-      return TranscribingPhase.preparingModel;
-    }
-    if (lower.contains('audio') || lower.contains('wav')) {
-      return TranscribingPhase.loadingAudio;
-    }
-    return null;
   }
 
   void _onReset(ResetTranscription event, Emitter<TranscriptionState> emit) {
@@ -256,7 +187,7 @@ class TranscriptionBloc extends Bloc<TranscriptionEvent, TranscriptionState> {
   String? get _currentVideoPath {
     final s = state;
     if (s is VideoSelected) return s.videoPath;
-    if (s is RuntimePreparing) return s.videoPath;
+    if (s is ModelPreparing) return s.videoPath;
     if (s is AudioTranscoding) return s.videoPath;
     if (s is Transcribing) return s.videoPath;
     if (s is TranscriptionComplete) return s.videoPath;
@@ -267,7 +198,7 @@ class TranscriptionBloc extends Bloc<TranscriptionEvent, TranscriptionState> {
   String? get _currentFileName {
     final s = state;
     if (s is VideoSelected) return s.fileName;
-    if (s is RuntimePreparing) return s.fileName;
+    if (s is ModelPreparing) return s.fileName;
     if (s is AudioTranscoding) return s.fileName;
     if (s is Transcribing) return s.fileName;
     if (s is TranscriptionComplete) return s.fileName;

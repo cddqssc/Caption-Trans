@@ -21,42 +21,42 @@ class AppConstants {
 
   static const String appName = 'Caption Trans';
 
-  /// Supported Whisper models with detailed information.
+  /// Supported Whisper models (sherpa-onnx ONNX int8 quantized).
   static final Map<String, WhisperModelInfo> whisperModels = {
     'tiny': WhisperModelInfo(
       name: 'tiny',
-      diskUsage: '~75 MB',
-      memoryUsage: '~273 MB',
+      diskUsage: '~111 MB',
+      memoryUsage: '~200 MB',
       quality: (l) => l.qualityLow,
     ),
     'base': WhisperModelInfo(
       name: 'base',
-      diskUsage: '~142 MB',
-      memoryUsage: '~388 MB',
+      diskUsage: '~198 MB',
+      memoryUsage: '~350 MB',
       quality: (l) => l.qualityBasic,
     ),
     'small': WhisperModelInfo(
       name: 'small',
-      diskUsage: '~466 MB',
-      memoryUsage: '~852 MB',
+      diskUsage: '~610 MB',
+      memoryUsage: '~700 MB',
       quality: (l) => l.qualityGood,
     ),
     'medium': WhisperModelInfo(
       name: 'medium',
-      diskUsage: '~1.5 GB',
-      memoryUsage: '~2.1 GB',
+      diskUsage: '~1.8 GB',
+      memoryUsage: '~2.0 GB',
       quality: (l) => l.qualityExcellent,
     ),
     'large-v3-turbo': WhisperModelInfo(
       name: 'large-v3-turbo',
-      diskUsage: '~1.5 GB',
-      memoryUsage: '~2.0 GB',
+      diskUsage: '~538 MB',
+      memoryUsage: '~1.0 GB',
       quality: (l) => l.qualitySuperior,
     ),
     'large-v3': WhisperModelInfo(
       name: 'large-v3',
-      diskUsage: '~2.9 GB',
-      memoryUsage: '~3.9 GB',
+      diskUsage: '~1.0 GB',
+      memoryUsage: '~2.0 GB',
       quality: (l) => l.qualityBest,
     ),
   };

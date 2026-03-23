@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -242,11 +243,19 @@ Keep your response concise (under 200 words).
     }
 
     try {
-      final streamedResponse = await _httpClient!.send(request);
-      final response = await http.Response.fromStream(streamedResponse);
+      final streamedResponse = await _httpClient!
+          .send(request)
+          .timeout(const Duration(seconds: 120));
+      final response = await http.Response.fromStream(streamedResponse)
+          .timeout(const Duration(seconds: 120));
       return _decodeJsonResponse(response);
     } on http.RequestAbortedException {
       throw const TranslationAbortedException();
+    } on TimeoutException {
+      throw Exception(
+        'Request timed out after 120 seconds. '
+        'The API server may be overloaded or unreachable.',
+      );
     }
   }
 

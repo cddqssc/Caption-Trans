@@ -1,507 +1,356 @@
 import 'dart:io';
 
-import '../../models/whisper_runtime_info.dart';
+import 'package:flutter/foundation.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
+import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
+
 import '../../models/subtitle_segment.dart';
 import '../../models/transcription_result.dart';
+import '../../models/whisper_runtime_info.dart';
 import '../audio/media_to_wav_converter.dart';
-import 'whisperx_sidecar.dart';
 
-class _WhisperExecutionConfig {
-  final String asrDevice;
-  final String vadDevice;
-  final String alignDevice;
-  final String computeType;
-  final int batchSize;
-  final bool usingGpu;
-  final bool usesCuda;
-  final String modeLabel;
-  final String? deviceName;
-  final String? statusDetail;
+/// Maps user-facing model names to sherpa-onnx release archive specs.
+class _SherpaModelSpec {
+  final String archiveName;
+  final String filePrefix;
+  final int featureDim;
 
-  const _WhisperExecutionConfig({
-    required this.asrDevice,
-    required this.vadDevice,
-    required this.alignDevice,
-    required this.computeType,
-    required this.batchSize,
-    required this.usingGpu,
-    required this.usesCuda,
-    required this.modeLabel,
-    required this.deviceName,
-    this.statusDetail,
+  const _SherpaModelSpec({
+    required this.archiveName,
+    required this.filePrefix,
+    this.featureDim = 80,
   });
+
+  String get encoderFile => '$filePrefix-encoder.int8.onnx';
+  String get decoderFile => '$filePrefix-decoder.int8.onnx';
+  String get tokensFile => '$filePrefix-tokens.txt';
 }
 
-/// Service for transcribing media using WhisperX through a local Python sidecar.
+/// Service for transcribing media using Whisper through sherpa-onnx.
 class WhisperService {
-  static const Map<String, String> modelMap = {
-    'tiny': 'tiny',
-    'base': 'base',
-    'small': 'small',
-    'medium': 'medium',
-    'large-v3': 'large-v3',
-    'large-v3-turbo': 'large-v3-turbo',
+  static const Map<String, _SherpaModelSpec> _modelSpecs = {
+    'tiny': _SherpaModelSpec(
+      archiveName: 'sherpa-onnx-whisper-tiny',
+      filePrefix: 'tiny',
+    ),
+    'base': _SherpaModelSpec(
+      archiveName: 'sherpa-onnx-whisper-base',
+      filePrefix: 'base',
+    ),
+    'small': _SherpaModelSpec(
+      archiveName: 'sherpa-onnx-whisper-small',
+      filePrefix: 'small',
+    ),
+    'medium': _SherpaModelSpec(
+      archiveName: 'sherpa-onnx-whisper-medium',
+      filePrefix: 'medium',
+    ),
+    'large-v3': _SherpaModelSpec(
+      archiveName: 'sherpa-onnx-whisper-large-v3',
+      filePrefix: 'large-v3',
+      featureDim: 128,
+    ),
+    'large-v3-turbo': _SherpaModelSpec(
+      archiveName: 'sherpa-onnx-whisper-turbo',
+      filePrefix: 'turbo',
+      featureDim: 128,
+    ),
   };
 
-  static const String _cpuDevice = 'cpu';
-  static const String _mpsDevice = 'mps';
-  static const String _cpuComputeType = 'int8';
-  static const int _cpuBatchSize = 8;
+  static const String _modelsReleasesBaseUrl =
+      'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models';
 
-  final WhisperXSidecar _sidecar = WhisperXSidecar();
   final MediaToWavConverter _wavConverter = MediaToWavConverter();
 
-  String? _currentModel;
+  String? _currentModelName;
+  String? _currentLanguage;
+  sherpa.OfflineRecognizer? _recognizer;
+  int _numThreads = 4;
 
-  /// Prepare sidecar runtime resources with phase-aware status updates.
-  ///
-  /// Only the actual runtime download phase reports determinate byte progress.
+  /// Ensure model files are downloaded locally.
   Future<void> downloadModel(
     String modelName, {
     void Function(int received, int total)? onDownloadProgress,
     void Function(String phase, double? progress)? onPreparationState,
   }) async {
-    final String? whisperxModel = modelMap[modelName];
-    if (whisperxModel == null) {
+    final _SherpaModelSpec? spec = _modelSpecs[modelName];
+    if (spec == null) {
       throw ArgumentError('Unknown model: $modelName');
     }
 
-    await _sidecar.ensureStarted(
-      onBootstrapStatus: (phase) {
-        onPreparationState?.call(phase, null);
-      },
-      onRuntimeDownloadProgress: (received, total) {
-        onDownloadProgress?.call(received, total);
-        onPreparationState?.call(
-          'downloading_runtime',
-          total > 0 ? received / total : null,
-        );
-      },
+    onPreparationState?.call('checking_model', null);
+    final Directory modelDir = await _resolveModelDir(spec);
+
+    // Check if already downloaded
+    final bool ready = await _isModelReady(modelDir, spec);
+    if (ready) {
+      onPreparationState?.call('model_ready', 1.0);
+      return;
+    }
+
+    // Download the tar.bz2 archive
+    onPreparationState?.call('downloading_model', 0.0);
+    final String archiveUrl =
+        '$_modelsReleasesBaseUrl/${spec.archiveName}.tar.bz2';
+    final Directory tempDir = await getTemporaryDirectory();
+    final File archiveFile = File(
+      p.join(tempDir.path, '${spec.archiveName}.tar.bz2'),
     );
+
+    try {
+      await _downloadFile(
+        Uri.parse(archiveUrl),
+        archiveFile,
+        onProgress: (received, total) {
+          onDownloadProgress?.call(received, total);
+          onPreparationState?.call(
+            'downloading_model',
+            total > 0 ? received / total : null,
+          );
+        },
+      );
+
+      // Extract archive
+      onPreparationState?.call('extracting_model', null);
+      // Remove incomplete model dir from prior failed attempt
+      if (modelDir.existsSync()) {
+        await modelDir.delete(recursive: true);
+      }
+      await _extractTarBz2(archiveFile, modelDir.parent);
+      // Mark extraction as complete
+      await File(p.join(modelDir.path, _readyMarker)).writeAsString('');
+
+      onPreparationState?.call('model_ready', 1.0);
+    } finally {
+      if (archiveFile.existsSync()) {
+        try {
+          await archiveFile.delete();
+        } catch (_) {}
+      }
+    }
   }
 
-  /// Ensure sidecar is ready and mark the selected model for next transcription.
+  /// Load a model, creating the OfflineRecognizer.
   ///
-  /// WhisperX model weights are loaded lazily on the first transcribe request.
-  Future<void> loadModel(String modelName) async {
-    final String? whisperxModel = modelMap[modelName];
-    if (whisperxModel == null) {
+  /// If [language] is provided (e.g. 'en', 'ja'), it's passed to Whisper
+  /// to skip auto-detection. Changing language requires reloading the model.
+  Future<void> loadModel(String modelName, {String? language}) async {
+    final _SherpaModelSpec? spec = _modelSpecs[modelName];
+    if (spec == null) {
       throw ArgumentError('Unknown model: $modelName');
     }
 
-    await _sidecar.ensureStarted();
-    _currentModel = modelName;
+    final String langCode = _normalizeLanguage(language);
+    if (_currentModelName == modelName &&
+        _currentLanguage == langCode &&
+        _recognizer != null) {
+      return;
+    }
+
+    // Dispose previous recognizer
+    _recognizer?.free();
+    _recognizer = null;
+    _currentModelName = null;
+    _currentLanguage = null;
+
+    final Directory modelDir = await _resolveModelDir(spec);
+    if (!await _isModelReady(modelDir, spec)) {
+      throw StateError(
+        'Model "$modelName" is not downloaded. Call downloadModel() first.',
+      );
+    }
+
+    _numThreads = _selectThreadCount();
+    final String encoderPath = p.join(modelDir.path, spec.encoderFile);
+    final String decoderPath = p.join(modelDir.path, spec.decoderFile);
+    final String tokensPath = p.join(modelDir.path, spec.tokensFile);
+
+    final sherpa.OfflineRecognizerConfig config =
+        sherpa.OfflineRecognizerConfig(
+      feat: sherpa.FeatureConfig(
+        sampleRate: 16000,
+        featureDim: spec.featureDim,
+      ),
+      model: sherpa.OfflineModelConfig(
+        whisper: sherpa.OfflineWhisperModelConfig(
+          encoder: encoderPath,
+          decoder: decoderPath,
+          language: langCode,
+          task: 'transcribe',
+          tailPaddings: 500,
+          enableTokenTimestamps: true,
+        ),
+        tokens: tokensPath,
+        numThreads: _numThreads,
+        provider: 'cpu',
+        debug: false,
+      ),
+    );
+
+    _recognizer = sherpa.OfflineRecognizer(config);
+    _currentModelName = modelName;
+    _currentLanguage = langCode;
   }
 
-  /// Convert input media into WhisperX-ready WAV.
+  /// Convert input media into WAV.
   Future<String> transcodeToWav(String mediaPath) {
-    return _wavConverter.ensureWhisperxWav(mediaPath);
+    return _wavConverter.ensureWav(mediaPath);
   }
 
-  /// Transcribe already-prepared WAV using loaded model (no fake progress).
+  /// Transcribe a WAV file using the loaded model.
   Future<TranscriptionResult> transcribeWav(
     String wavPath, {
     String language = 'auto',
     void Function(String status, String? detail)? onStatus,
-    void Function(String line)? onLog,
     void Function(WhisperRuntimeInfo info)? onRuntimeInfo,
   }) async {
-    final String? selectedModel = _currentModel;
-    if (selectedModel == null) {
+    final sherpa.OfflineRecognizer? recognizer = _recognizer;
+    if (recognizer == null) {
       throw StateError('No model loaded. Call loadModel() first.');
     }
 
-    final String whisperxModel = modelMap[selectedModel]!;
-    final Map<String, dynamic> payload = await _transcribeWithFallbacks(
-      wavPath: wavPath,
-      modelName: whisperxModel,
-      language: language == 'auto' ? null : language,
-      onStatus: onStatus,
-      onLog: onLog,
-      onRuntimeInfo: onRuntimeInfo,
+    onRuntimeInfo?.call(_buildRuntimeInfo());
+    onStatus?.call('loading_audio', null);
+
+    // Read WAV file
+    final sherpa.WaveData waveData = sherpa.readWave(wavPath);
+
+    onStatus?.call('transcribing', null);
+
+    // Create stream and feed audio
+    final sherpa.OfflineStream stream = recognizer.createStream();
+    stream.acceptWaveform(
+      samples: waveData.samples,
+      sampleRate: waveData.sampleRate,
     );
-    return _parseTranscriptionPayload(payload, requestedLanguage: language);
-  }
+    recognizer.decode(stream);
 
-  Future<WhisperRuntimeInfo> inspectRuntime({required String modelName}) async {
-    final String whisperxModel = modelMap[modelName] ?? modelName;
-    final _WhisperExecutionConfig config = await _resolveExecutionConfig(
-      whisperxModel,
-    );
-    return _buildRuntimeInfo(config);
-  }
+    final sherpa.OfflineRecognizerResult result = recognizer.getResult(stream);
 
-  Future<Map<String, dynamic>> _transcribeWithFallbacks({
-    required String wavPath,
-    required String modelName,
-    required String? language,
-    void Function(String status, String? detail)? onStatus,
-    void Function(String line)? onLog,
-    void Function(WhisperRuntimeInfo info)? onRuntimeInfo,
-  }) async {
-    final _WhisperExecutionConfig primaryConfig = await _resolveExecutionConfig(
-      modelName,
-    );
+    // Extract data before freeing
+    final String text = result.text;
+    final List<String> tokens = List<String>.from(result.tokens);
+    final List<double> timestamps = List<double>.from(result.timestamps);
 
-    try {
-      return await _transcribeWithConfig(
-        wavPath: wavPath,
-        modelName: modelName,
-        language: language,
-        config: primaryConfig,
-        onStatus: onStatus,
-        onLog: onLog,
-        onRuntimeInfo: onRuntimeInfo,
-      );
-    } catch (error) {
-      if (primaryConfig.usesCuda) {
-        if (!_looksLikeCudaFailure(error)) {
-          rethrow;
-        }
+    stream.free();
 
-        final _WhisperExecutionConfig? degradedConfig =
-            _buildDegradedCudaConfig(primaryConfig);
-        if (degradedConfig != null) {
-          await _restartSidecarForRetry();
-          try {
-            return await _transcribeWithConfig(
-              wavPath: wavPath,
-              modelName: modelName,
-              language: language,
-              config: degradedConfig,
-              onStatus: onStatus,
-              onLog: onLog,
-              onRuntimeInfo: onRuntimeInfo,
-            );
-          } catch (retryError) {
-            if (!_looksLikeCudaFailure(retryError)) {
-              rethrow;
-            }
-          }
-        }
+    onStatus?.call('finalizing', null);
 
-        await _restartSidecarForRetry();
-        return _transcribeWithConfig(
-          wavPath: wavPath,
-          modelName: modelName,
-          language: language,
-          config: _cpuConfig(
-            statusDetail:
-                'CUDA failed, falling back to CPU ($_cpuComputeType, batch=$_cpuBatchSize)',
-          ),
-          onStatus: onStatus,
-          onLog: onLog,
-          onRuntimeInfo: onRuntimeInfo,
-        );
-      }
-
-      if (!primaryConfig.usingGpu || !_looksLikeMpsFailure(error)) {
-        rethrow;
-      }
-
-      await _restartSidecarForRetry();
-      return _transcribeWithConfig(
-        wavPath: wavPath,
-        modelName: modelName,
-        language: language,
-        config: _cpuConfig(
-          statusDetail:
-              'MPS failed, falling back to CPU ($_cpuComputeType, batch=$_cpuBatchSize)',
-        ),
-        onStatus: onStatus,
-        onLog: onLog,
-        onRuntimeInfo: onRuntimeInfo,
-      );
-    }
-  }
-
-  Future<Map<String, dynamic>> _transcribeWithConfig({
-    required String wavPath,
-    required String modelName,
-    required String? language,
-    required _WhisperExecutionConfig config,
-    void Function(String status, String? detail)? onStatus,
-    void Function(String line)? onLog,
-    void Function(WhisperRuntimeInfo info)? onRuntimeInfo,
-  }) async {
-    onRuntimeInfo?.call(await _buildRuntimeInfo(config));
-    onStatus?.call('preparing_model', config.statusDetail);
-    final Map<String, dynamic> asrOptions = _buildAsrOptions(language);
-    final Map<String, dynamic> vadOptions = _buildVadOptions(language);
-    final Map<String, dynamic> segmentationOptions = _buildSegmentationOptions(
-      language,
-    );
-    return _sidecar.transcribe(
-      wavPath: wavPath,
-      modelName: modelName,
-      language: language,
-      device: config.asrDevice,
-      vadDevice: config.vadDevice,
-      alignDevice: config.alignDevice,
-      computeType: config.computeType,
-      batchSize: config.batchSize,
-      noAlign: false,
-      asrOptions: asrOptions.isEmpty ? null : asrOptions,
-      vadOptions: vadOptions.isEmpty ? null : vadOptions,
-      segmentationOptions: segmentationOptions.isEmpty
-          ? null
-          : segmentationOptions,
-      onStatus: onStatus,
-      onLog: onLog,
+    return _parseResult(
+      text: text,
+      tokens: tokens,
+      timestamps: timestamps,
+      audioDuration: Duration(
+        milliseconds:
+            (waveData.samples.length / waveData.sampleRate * 1000).round(),
+      ),
+      requestedLanguage: language,
     );
   }
 
-  Map<String, dynamic> _buildAsrOptions(String? language) {
-    switch (_normalizeLanguageCode(language)) {
-      case 'ja':
-        return const <String, dynamic>{
-          'initial_prompt': '句読点を含めて自然な文として書き起こしてください。',
-        };
-      default:
-        return const <String, dynamic>{};
-    }
+  WhisperRuntimeInfo inspectRuntime({required String modelName}) {
+    return _buildRuntimeInfo();
   }
 
-  Map<String, dynamic> _buildVadOptions(String? language) {
-    switch (_normalizeLanguageCode(language)) {
-      case 'ja':
-        return const <String, dynamic>{};
-      default:
-        return const <String, dynamic>{};
-    }
+  WhisperRuntimeInfo _buildRuntimeInfo() {
+    return WhisperRuntimeInfo(
+      modeLabel: 'CPU (sherpa-onnx)',
+      numThreads: _numThreads,
+      note: 'Using sherpa-onnx native runtime',
+    );
   }
 
-  Map<String, dynamic> _buildSegmentationOptions(String? language) {
-    switch (_normalizeLanguageCode(language)) {
-      case 'ja':
-        return const <String, dynamic>{
-          'split_on_pause': true,
-          'pause_threshold_sec': 0.55,
-          'max_segment_duration_sec': 6.0,
-          'max_segment_chars': 30,
-          'min_split_chars': 6,
-          'prefer_punctuation_split': true,
-        };
-      default:
-        return const <String, dynamic>{};
-    }
-  }
-
-  String? _normalizeLanguageCode(String? language) {
+  String _normalizeLanguage(String? language) {
     final String normalized = (language ?? '').trim().toLowerCase();
-    if (normalized.isEmpty || normalized == 'auto') {
-      return null;
-    }
+    if (normalized.isEmpty || normalized == 'auto') return '';
     return normalized;
   }
 
-  Future<_WhisperExecutionConfig> _resolveExecutionConfig(
-    String whisperxModel,
+  int _selectThreadCount() {
+    return Platform.numberOfProcessors.clamp(2, 8);
+  }
+
+  Future<Directory> _resolveModelDir(_SherpaModelSpec spec) async {
+    final Directory supportDir = await getApplicationSupportDirectory();
+    return Directory(
+      p.join(supportDir.path, 'sherpa_models', spec.archiveName),
+    );
+  }
+
+  static const String _readyMarker = '.model_ready';
+
+  Future<bool> _isModelReady(
+    Directory modelDir,
+    _SherpaModelSpec spec,
   ) async {
-    if (Platform.isMacOS && _isArm64Process()) {
-      final WhisperXRuntimeProbe probe = await _loadRuntimeProbe();
-      if (probe.canUseMps) {
-        return const _WhisperExecutionConfig(
-          asrDevice: _cpuDevice,
-          vadDevice: _mpsDevice,
-          alignDevice: _mpsDevice,
-          computeType: _cpuComputeType,
-          batchSize: _cpuBatchSize,
-          usingGpu: true,
-          usesCuda: false,
-          modeLabel: 'Mixed CPU + MPS',
-          deviceName: 'Apple Metal (MPS)',
-          statusDetail:
-              'Using CPU ASR with MPS-accelerated VAD and alignment (int8, batch=8)',
-        );
+    if (!modelDir.existsSync()) return false;
+    if (!File(p.join(modelDir.path, _readyMarker)).existsSync()) return false;
+    final requiredFiles = [spec.encoderFile, spec.decoderFile, spec.tokensFile];
+    for (final fileName in requiredFiles) {
+      if (!File(p.join(modelDir.path, fileName)).existsSync()) return false;
+    }
+    return true;
+  }
+
+  Future<void> _downloadFile(
+    Uri url,
+    File output, {
+    void Function(int received, int total)? onProgress,
+  }) async {
+    final HttpClient client = HttpClient();
+    client.autoUncompress = false;
+    IOSink? sink;
+    try {
+      final HttpClientRequest request = await client.getUrl(url);
+      HttpClientResponse response = await request.close();
+
+      // Follow redirects manually (GitHub releases redirect)
+      int redirectCount = 0;
+      while (response.isRedirect && redirectCount < 10) {
+        final String? location = response.headers.value('location');
+        if (location == null) break;
+        await response.drain<void>();
+        final HttpClientRequest redirect =
+            await client.getUrl(Uri.parse(location));
+        response = await redirect.close();
+        redirectCount++;
       }
 
-      final String statusDetail = probe.mpsBuilt
-          ? 'MPS is unavailable on this machine, using CPU ($_cpuComputeType, batch=$_cpuBatchSize)'
-          : 'Installed PyTorch runtime does not expose MPS, using CPU ($_cpuComputeType, batch=$_cpuBatchSize)';
-      return _cpuConfig(statusDetail: statusDetail);
-    }
-
-    if (!Platform.isWindows) {
-      return _cpuConfig();
-    }
-
-    final WhisperXRuntimeProbe probe = await _loadRuntimeProbe();
-    if (!probe.canUseCuda) {
-      return _cpuConfig();
-    }
-
-    final String computeType = _selectCudaComputeType(probe.cudaComputeTypes);
-    final int batchSize = _selectCudaBatchSize(whisperxModel);
-    final String deviceName = (probe.cudaDeviceName?.trim().isNotEmpty ?? false)
-        ? probe.cudaDeviceName!.trim()
-        : 'CUDA GPU';
-
-    return _WhisperExecutionConfig(
-      asrDevice: 'cuda',
-      vadDevice: 'cuda',
-      alignDevice: 'cuda',
-      computeType: computeType,
-      batchSize: batchSize,
-      usingGpu: true,
-      usesCuda: true,
-      modeLabel: 'CUDA GPU',
-      deviceName: deviceName,
-      statusDetail:
-          'Using $deviceName on CUDA ($computeType, batch=$batchSize)',
-    );
-  }
-
-  Future<WhisperXRuntimeProbe> _loadRuntimeProbe() async {
-    return _sidecar.probeRuntime();
-  }
-
-  Future<WhisperRuntimeInfo> _buildRuntimeInfo(
-    _WhisperExecutionConfig config,
-  ) async {
-    final WhisperXRuntimeProbe? probe =
-        (Platform.isWindows || (Platform.isMacOS && _isArm64Process()))
-        ? await _loadRuntimeProbe()
-        : null;
-
-    final bool cudaAvailable = probe?.cudaAvailable == true;
-    final String? torchCudaVersion = probe?.torchCudaVersion;
-    final int? logicalCpuCount = (probe?.logicalCpuCount ?? 0) > 0
-        ? probe!.logicalCpuCount
-        : null;
-    final int? physicalCpuCount = (probe?.physicalCpuCount ?? 0) > 0
-        ? probe!.physicalCpuCount
-        : null;
-    final int? recommendedCpuThreads = (probe?.recommendedCpuThreads ?? 0) > 0
-        ? probe!.recommendedCpuThreads
-        : null;
-    final String modeLabel = !config.usingGpu && cudaAvailable
-        ? 'CPU fallback'
-        : config.modeLabel;
-
-    return WhisperRuntimeInfo(
-      modeLabel: modeLabel,
-      deviceName: config.deviceName,
-      computeType: config.computeType,
-      batchSize: config.batchSize,
-      usingGpu: config.usingGpu,
-      cudaAvailable: cudaAvailable,
-      torchCudaVersion: torchCudaVersion,
-      logicalCpuCount: logicalCpuCount,
-      physicalCpuCount: physicalCpuCount,
-      recommendedCpuThreads: recommendedCpuThreads,
-      note: config.statusDetail,
-    );
-  }
-
-  _WhisperExecutionConfig _cpuConfig({String? statusDetail}) {
-    return _WhisperExecutionConfig(
-      asrDevice: _cpuDevice,
-      vadDevice: _cpuDevice,
-      alignDevice: _cpuDevice,
-      computeType: _cpuComputeType,
-      batchSize: _cpuBatchSize,
-      usingGpu: false,
-      usesCuda: false,
-      modeLabel: 'CPU',
-      deviceName: null,
-      statusDetail: statusDetail,
-    );
-  }
-
-  _WhisperExecutionConfig? _buildDegradedCudaConfig(
-    _WhisperExecutionConfig config,
-  ) {
-    if (!config.usesCuda) {
-      return null;
-    }
-
-    final int smallerBatchSize = config.batchSize > 4
-        ? config.batchSize ~/ 2
-        : 4;
-    if (config.computeType == 'int8' && smallerBatchSize >= config.batchSize) {
-      return null;
-    }
-
-    return _WhisperExecutionConfig(
-      asrDevice: 'cuda',
-      vadDevice: 'cuda',
-      alignDevice: 'cuda',
-      computeType: 'int8',
-      batchSize: smallerBatchSize,
-      usingGpu: true,
-      usesCuda: true,
-      modeLabel: 'CUDA GPU',
-      deviceName: config.deviceName,
-      statusDetail:
-          'CUDA init failed or VRAM is low, retrying lighter GPU mode (int8, batch=$smallerBatchSize)',
-    );
-  }
-
-  String _selectCudaComputeType(List<String> computeTypes) {
-    final Set<String> normalized = computeTypes
-        .map((String item) => item.trim().toLowerCase())
-        .where((String item) => item.isNotEmpty)
-        .toSet();
-
-    for (final String candidate in <String>[
-      'float16',
-      'int8_float16',
-      'int8',
-      'float32',
-    ]) {
-      if (normalized.contains(candidate)) {
-        return candidate;
+      if (response.statusCode != 200) {
+        throw Exception('Download failed: HTTP ${response.statusCode} ($url)');
       }
+
+      final int total = response.contentLength;
+      int received = 0;
+      sink = output.openWrite();
+      await for (final List<int> chunk in response) {
+        sink.add(chunk);
+        received += chunk.length;
+        onProgress?.call(received, total);
+      }
+      await sink.close();
+      sink = null;
+    } finally {
+      try {
+        await sink?.close();
+      } catch (_) {}
+      client.close(force: true);
     }
-
-    return 'float16';
   }
 
-  int _selectCudaBatchSize(String whisperxModel) {
-    if (whisperxModel == 'medium' || whisperxModel.startsWith('large')) {
-      return 8;
+  Future<void> _extractTarBz2(File archiveFile, Directory destination) async {
+    await destination.create(recursive: true);
+    // Use system tar command which handles tar.bz2 natively
+    final ProcessResult result = await Process.run(
+      'tar',
+      ['xjf', archiveFile.path, '-C', destination.path],
+    );
+    if (result.exitCode != 0) {
+      throw Exception(
+        'Failed to extract model archive.\n${result.stderr}',
+      );
     }
-    return 16;
-  }
-
-  bool _looksLikeCudaFailure(Object error) {
-    final String lower = error.toString().toLowerCase();
-    return <String>[
-      'cuda',
-      'cudnn',
-      'cublas',
-      'ctranslate2',
-      'compute type',
-      'out of memory',
-      'insufficient memory',
-      'not enough memory',
-      'device-side assert',
-      'failed to load library',
-      'dll load failed',
-    ].any(lower.contains);
-  }
-
-  bool _looksLikeMpsFailure(Object error) {
-    final String lower = error.toString().toLowerCase();
-    return <String>[
-      'mps',
-      'metal',
-      'not implemented for mps',
-      'placeholder storage has not been allocated on mps',
-      'mps backend out of memory',
-      'does not include mps support',
-      'is not available on this machine',
-    ].any(lower.contains);
-  }
-
-  bool _isArm64Process() {
-    final String version = Platform.version.toLowerCase();
-    return version.contains('arm64') || version.contains('aarch64');
-  }
-
-  Future<void> _restartSidecarForRetry() async {
-    await _sidecar.dispose();
   }
 
   Future<void> cleanupTempWav(
@@ -510,66 +359,138 @@ class WhisperService {
   }) async {
     if (wavPath == originalMediaPath) return;
     final File file = File(wavPath);
-    if (await file.exists()) {
-      await file.delete();
+    try {
+      if (await file.exists()) {
+        await file.delete();
+      }
+    } catch (e) {
+      debugPrint('Warning: Failed to clean up temp WAV: $e');
     }
   }
 
-  TranscriptionResult _parseTranscriptionPayload(
-    Map<String, dynamic> payload, {
+  TranscriptionResult _parseResult({
+    required String text,
+    required List<String> tokens,
+    required List<double> timestamps,
+    required Duration audioDuration,
     required String requestedLanguage,
   }) {
-    final List<dynamic> rawSegments =
-        (payload['segments'] as List<dynamic>?) ?? [];
-    final List<SubtitleSegment> segments = <SubtitleSegment>[];
-    for (int i = 0; i < rawSegments.length; i++) {
-      final dynamic raw = rawSegments[i];
-      if (raw is! Map<String, dynamic>) {
-        continue;
-      }
-
-      final int startMs = (((raw['start'] as num?) ?? 0).toDouble() * 1000)
-          .round();
-      final int endMs = (((raw['end'] as num?) ?? 0).toDouble() * 1000).round();
-      final String text = ((raw['text'] as String?) ?? '').trim();
-      if (text.isEmpty) continue;
-
-      segments.add(
-        SubtitleSegment(
-          index: i + 1,
-          startTime: Duration(milliseconds: startMs),
-          endTime: Duration(milliseconds: endMs < startMs ? startMs : endMs),
-          text: text,
-        ),
+    final String trimmedText = text.trim();
+    if (trimmedText.isEmpty) {
+      return TranscriptionResult(
+        language: requestedLanguage == 'auto' ? 'unknown' : requestedLanguage,
+        duration: audioDuration,
+        segments: const [],
       );
     }
 
-    final String detectedLanguage =
-        (payload['language'] as String?)?.trim().isNotEmpty == true
-        ? (payload['language'] as String)
-        : (requestedLanguage == 'auto' ? 'unknown' : requestedLanguage);
-
-    final Duration duration = (() {
-      final num? value = payload['duration_sec'] as num?;
-      if (value == null) {
-        if (segments.isEmpty) return Duration.zero;
-        return segments.last.endTime;
-      }
-      return Duration(milliseconds: (value.toDouble() * 1000).round());
-    })();
+    final List<SubtitleSegment> segments;
+    if (timestamps.isNotEmpty && tokens.isNotEmpty) {
+      segments = _buildSegmentsFromTokens(tokens, timestamps, audioDuration);
+    } else {
+      // Fallback: single segment with full audio duration
+      segments = [
+        SubtitleSegment(
+          index: 1,
+          startTime: Duration.zero,
+          endTime: audioDuration,
+          text: trimmedText,
+        ),
+      ];
+    }
 
     return TranscriptionResult(
-      language: detectedLanguage,
-      duration: duration,
+      language: requestedLanguage == 'auto' ? 'unknown' : requestedLanguage,
+      duration: audioDuration,
       segments: segments,
     );
   }
 
-  bool get isModelLoaded => _currentModel != null;
-  String? get loadedModelName => _currentModel;
+  List<SubtitleSegment> _buildSegmentsFromTokens(
+    List<String> tokens,
+    List<double> timestamps,
+    Duration audioDuration,
+  ) {
+    if (tokens.isEmpty) return const [];
+
+    final List<SubtitleSegment> segments = [];
+    final StringBuffer currentText = StringBuffer();
+    double segmentStart = timestamps.isNotEmpty ? timestamps[0] : 0.0;
+    double lastEnd = segmentStart;
+    int segmentIndex = 1;
+
+    const double maxSegmentDuration = 8.0;
+    const int maxSegmentChars = 80;
+    const double pauseThreshold = 0.8;
+    const Set<String> sentenceEnders = {'.', '!', '?', '\u3002', '\uff01', '\uff1f'};
+
+    for (int i = 0; i < tokens.length; i++) {
+      final String token = tokens[i];
+      final double tokenStart =
+          i < timestamps.length ? timestamps[i] : lastEnd;
+      final double tokenEnd = i + 1 < timestamps.length
+          ? timestamps[i + 1]
+          : (tokenStart + 0.1);
+
+      final double gap = tokenStart - lastEnd;
+      final double segmentDuration = tokenStart - segmentStart;
+      final String trimmedCurrent = currentText.toString().trim();
+
+      // Decide if we should split before this token
+      bool shouldSplit = false;
+      if (trimmedCurrent.isNotEmpty) {
+        if (gap >= pauseThreshold) {
+          shouldSplit = true;
+        } else if (segmentDuration >= maxSegmentDuration) {
+          shouldSplit = true;
+        } else if (currentText.length >= maxSegmentChars &&
+            trimmedCurrent.isNotEmpty &&
+            sentenceEnders.contains(trimmedCurrent[trimmedCurrent.length - 1])) {
+          shouldSplit = true;
+        }
+      }
+
+      if (shouldSplit && trimmedCurrent.isNotEmpty) {
+        segments.add(SubtitleSegment(
+          index: segmentIndex++,
+          startTime: Duration(milliseconds: (segmentStart * 1000).round()),
+          endTime: Duration(milliseconds: (lastEnd * 1000).round()),
+          text: trimmedCurrent,
+        ));
+        currentText.clear();
+        segmentStart = tokenStart;
+      }
+
+      currentText.write(token);
+      lastEnd = tokenEnd;
+    }
+
+    // Flush remaining text
+    final String remaining = currentText.toString().trim();
+    if (remaining.isNotEmpty) {
+      segments.add(SubtitleSegment(
+        index: segmentIndex,
+        startTime: Duration(milliseconds: (segmentStart * 1000).round()),
+        endTime: Duration(
+          milliseconds: (lastEnd * 1000).round().clamp(
+                0,
+                audioDuration.inMilliseconds,
+              ),
+        ),
+        text: remaining,
+      ));
+    }
+
+    return segments;
+  }
+
+  bool get isModelLoaded => _currentModelName != null;
+  String? get loadedModelName => _currentModelName;
 
   Future<void> dispose() async {
-    await _sidecar.dispose();
-    _currentModel = null;
+    _recognizer?.free();
+    _recognizer = null;
+    _currentModelName = null;
+    _currentLanguage = null;
   }
 }

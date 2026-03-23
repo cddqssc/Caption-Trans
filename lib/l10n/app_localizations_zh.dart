@@ -90,22 +90,13 @@ class AppLocalizationsZh extends AppLocalizations {
   String get preparingRuntime => '正在准备运行时...';
 
   @override
-  String get runtimeChecking => '正在检查运行时...';
+  String get runtimeChecking => '正在检查模型...';
 
   @override
-  String get runtimeDownloading => '正在下载运行时包...';
+  String get runtimeDownloading => '正在下载模型...';
 
   @override
-  String get runtimeExtracting => '正在解压运行时包...';
-
-  @override
-  String get runtimeCreatingEnvironment => '正在创建 Python 环境...';
-
-  @override
-  String get runtimeInstallingDependencies => '正在安装依赖（首次安装需要较长时间）...';
-
-  @override
-  String get runtimeStartingSidecar => '正在启动运行时...';
+  String get runtimeExtracting => '正在解压模型...';
 
   @override
   String get transcodingAudio => '正在将媒体转码为音频...';
@@ -117,13 +108,10 @@ class AppLocalizationsZh extends AppLocalizations {
   String get transcriptionLoadingAudio => '正在加载音频...';
 
   @override
-  String get transcriptionPreparingModel => '正在准备模型（首次运行若无缓存会下载）...';
+  String get transcriptionPreparingModel => '正在加载模型...';
 
   @override
   String get transcriptionRunning => '正在转录音频...';
-
-  @override
-  String get transcriptionAligning => '正在对齐时间戳...';
 
   @override
   String get transcriptionFinalizing => '正在整理转录结果...';

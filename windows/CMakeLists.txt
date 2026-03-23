@@ -58,6 +58,22 @@ add_subdirectory("runner")
 include(flutter/generated_plugins.cmake)
 
 
+# === Bundle sherpa-onnx native libraries ===
+# The sherpa_onnx_windows FFI plugin DLLs are not auto-bundled by Flutter's
+# build tool. We locate them from the pub cache and add them to the install.
+set(_SHERPA_ONNX_PLUGIN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/flutter/ephemeral/.plugin_symlinks/sherpa_onnx_windows/windows")
+if(NOT EXISTS "${_SHERPA_ONNX_PLUGIN_DIR}")
+  # Fallback: search the pub cache directly
+  file(GLOB _SHERPA_ONNX_PLUGIN_DIR "$ENV{LOCALAPPDATA}/Pub/Cache/hosted/pub.dev/sherpa_onnx_windows-*/windows")
+endif()
+if(EXISTS "${_SHERPA_ONNX_PLUGIN_DIR}")
+  file(GLOB _SHERPA_ONNX_DLLS "${_SHERPA_ONNX_PLUGIN_DIR}/*.dll")
+  list(APPEND PLUGIN_BUNDLED_LIBRARIES ${_SHERPA_ONNX_DLLS})
+  message(STATUS "sherpa-onnx: bundling ${_SHERPA_ONNX_DLLS}")
+else()
+  message(WARNING "sherpa-onnx: native libraries not found. The app may fail at runtime.")
+endif()
+
 # === Installation ===
 # Support files are copied into place next to the executable, so that it can
 # run in place. This is done instead of making a separate bundle (as on Linux)

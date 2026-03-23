@@ -263,38 +263,20 @@ abstract class AppLocalizations {
   /// No description provided for @runtimeChecking.
   ///
   /// In en, this message translates to:
-  /// **'Checking runtime...'**
+  /// **'Checking model...'**
   String get runtimeChecking;
 
   /// No description provided for @runtimeDownloading.
   ///
   /// In en, this message translates to:
-  /// **'Downloading runtime package...'**
+  /// **'Downloading model...'**
   String get runtimeDownloading;
 
   /// No description provided for @runtimeExtracting.
   ///
   /// In en, this message translates to:
-  /// **'Extracting runtime package...'**
+  /// **'Extracting model...'**
   String get runtimeExtracting;
-
-  /// No description provided for @runtimeCreatingEnvironment.
-  ///
-  /// In en, this message translates to:
-  /// **'Creating Python environment...'**
-  String get runtimeCreatingEnvironment;
-
-  /// No description provided for @runtimeInstallingDependencies.
-  ///
-  /// In en, this message translates to:
-  /// **'Installing dependencies (first run may take a while)...'**
-  String get runtimeInstallingDependencies;
-
-  /// No description provided for @runtimeStartingSidecar.
-  ///
-  /// In en, this message translates to:
-  /// **'Starting runtime...'**
-  String get runtimeStartingSidecar;
 
   /// No description provided for @transcodingAudio.
   ///
@@ -317,7 +299,7 @@ abstract class AppLocalizations {
   /// No description provided for @transcriptionPreparingModel.
   ///
   /// In en, this message translates to:
-  /// **'Preparing model (download on first run if needed)...'**
+  /// **'Loading model...'**
   String get transcriptionPreparingModel;
 
   /// No description provided for @transcriptionRunning.
@@ -325,12 +307,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Transcribing audio...'**
   String get transcriptionRunning;
-
-  /// No description provided for @transcriptionAligning.
-  ///
-  /// In en, this message translates to:
-  /// **'Aligning timestamps...'**
-  String get transcriptionAligning;
 
   /// No description provided for @transcriptionFinalizing.
   ///

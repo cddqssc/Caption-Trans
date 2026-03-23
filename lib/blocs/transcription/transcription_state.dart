@@ -26,39 +26,29 @@ class VideoSelected extends TranscriptionState {
   List<Object?> get props => [videoPath, fileName];
 }
 
-enum RuntimePreparingPhase {
-  checkingRuntime,
-  downloadingRuntime,
-  extractingRuntime,
-  creatingEnvironment,
-  installingDependencies,
-  startingSidecar,
+enum ModelPreparingPhase {
+  checkingModel,
+  downloadingModel,
+  extractingModel,
+  loadingModel,
 }
 
-/// Sidecar runtime assets are being prepared/downloaded.
-class RuntimePreparing extends TranscriptionState {
+/// Model is being downloaded or loaded.
+class ModelPreparing extends TranscriptionState {
   final String videoPath;
   final String fileName;
-  final RuntimePreparingPhase phase;
+  final ModelPreparingPhase phase;
   final double? progress;
-  final WhisperRuntimeInfo? runtimeInfo;
 
-  const RuntimePreparing({
+  const ModelPreparing({
     required this.videoPath,
     required this.fileName,
-    this.phase = RuntimePreparingPhase.checkingRuntime,
+    this.phase = ModelPreparingPhase.checkingModel,
     this.progress,
-    this.runtimeInfo,
   });
 
   @override
-  List<Object?> get props => [
-    videoPath,
-    fileName,
-    phase,
-    progress,
-    runtimeInfo,
-  ];
+  List<Object?> get props => [videoPath, fileName, phase, progress];
 }
 
 /// Media is being transcoded to WAV.
@@ -77,12 +67,10 @@ class AudioTranscoding extends TranscriptionState {
   List<Object?> get props => [videoPath, fileName, runtimeInfo];
 }
 
-/// WhisperX is transcribing.
+/// Whisper is transcribing.
 enum TranscribingPhase {
   loadingAudio,
-  preparingModel,
   transcribing,
-  aligning,
   finalizing,
 }
 

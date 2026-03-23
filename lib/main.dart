@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa_onnx;
 import 'blocs/transcription/transcription_bloc.dart';
 import 'blocs/translation/translation_bloc.dart';
 import 'blocs/project/project_bloc.dart';
@@ -11,6 +12,7 @@ import 'ui/home_page.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  sherpa_onnx.initBindings();
   final settingsService = await SettingsService.init();
 
   runApp(CaptionTransApp(settingsService: settingsService));

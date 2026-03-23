@@ -91,23 +91,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get preparingRuntime => 'Preparing runtime...';
 
   @override
-  String get runtimeChecking => 'Checking runtime...';
+  String get runtimeChecking => 'Checking model...';
 
   @override
-  String get runtimeDownloading => 'Downloading runtime package...';
+  String get runtimeDownloading => 'Downloading model...';
 
   @override
-  String get runtimeExtracting => 'Extracting runtime package...';
-
-  @override
-  String get runtimeCreatingEnvironment => 'Creating Python environment...';
-
-  @override
-  String get runtimeInstallingDependencies =>
-      'Installing dependencies (first run may take a while)...';
-
-  @override
-  String get runtimeStartingSidecar => 'Starting runtime...';
+  String get runtimeExtracting => 'Extracting model...';
 
   @override
   String get transcodingAudio => 'Transcoding media to audio...';
@@ -119,14 +109,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get transcriptionLoadingAudio => 'Loading audio...';
 
   @override
-  String get transcriptionPreparingModel =>
-      'Preparing model (download on first run if needed)...';
+  String get transcriptionPreparingModel => 'Loading model...';
 
   @override
   String get transcriptionRunning => 'Transcribing audio...';
-
-  @override
-  String get transcriptionAligning => 'Aligning timestamps...';
 
   @override
   String get transcriptionFinalizing => 'Finalizing transcription result...';

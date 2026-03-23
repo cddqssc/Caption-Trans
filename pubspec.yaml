@@ -13,11 +13,15 @@ dependencies:
     sdk: flutter
   intl: ^0.20.2
 
-  # Whisper / Audio
+  # Speech Recognition
+  sherpa_onnx: ^1.10.16
+
+  # Audio Conversion
   ffmpeg_kit_flutter_new_min: ^3.1.0
   ffmpeg_kit_extended_flutter:
     git:
       url: https://github.com/cddqssc/ffmpeg-kit-extended.git
+      ref: efab14f
       path: flutter
 
   # State Management
@@ -47,7 +51,7 @@ dependencies:
 ffmpeg_kit_extended_config:
   linux: "https://github.com/akashskypatel/ffmpeg-kit-builders/releases/download/v0.8.2-linux/bundle-base-linux-x86_64-shared-small-gpl.zip"
   windows: "https://github.com/akashskypatel/ffmpeg-kit-builders/releases/download/v0.8.2-windows/bundle-base-windows-x86_64-shared-small-gpl.zip"
-  
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -67,4 +71,3 @@ flutter:
   uses-material-design: true
   assets:
     - assets/images/
-    - assets/sidecar/

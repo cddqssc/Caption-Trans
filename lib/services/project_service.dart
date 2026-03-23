@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import '../models/project.dart';
@@ -28,7 +29,9 @@ class ProjectService {
           final jsonMap = jsonDecode(content) as Map<String, dynamic>;
           projects.add(Project.fromJson(jsonMap));
         } catch (e) {
-          // Skip corrupted or invalid files
+          debugPrint(
+            'Warning: Failed to load project file ${file.path}: $e',
+          );
           continue;
         }
       }
@@ -39,20 +42,22 @@ class ProjectService {
     return projects;
   }
 
-  /// Saves a project to local storage.
+  /// Saves a project to local storage using atomic write (temp + rename).
   Future<void> saveProject(Project project) async {
     final dir = await _getProjectsDirectory();
     final file = File(p.join(dir.path, '${project.id}.json'));
-    
+    final tmpFile = File(p.join(dir.path, '${project.id}.json.tmp'));
+
     final jsonString = jsonEncode(project.toJson());
-    await file.writeAsString(jsonString);
+    await tmpFile.writeAsString(jsonString, flush: true);
+    await tmpFile.rename(file.path);
   }
 
   /// Deletes a project by ID.
   Future<void> deleteProject(String projectId) async {
     final dir = await _getProjectsDirectory();
     final file = File(p.join(dir.path, '$projectId.json'));
-    
+
     if (await file.exists()) {
       await file.delete();
     }

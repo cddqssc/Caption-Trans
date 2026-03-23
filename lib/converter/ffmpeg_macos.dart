@@ -5,9 +5,14 @@ import 'package:flutter/foundation.dart';
 
 /// FFmpeg converter for macOS.
 ///
-/// Converts media into 16kHz mono 16-bit PCM WAV which WhisperX accepts.
+/// Converts media into 16kHz mono 16-bit PCM WAV suitable for speech recognition.
 class FFmpegMacOsConverter {
   FFmpegMacOsConverter._();
+
+  static String _escapeArgument(String path) {
+    final escaped = path.replaceAll("'", r"'\''");
+    return "'$escaped'";
+  }
 
   static Future<void> convertToWav({
     required String inputPath,
@@ -16,7 +21,7 @@ class FFmpegMacOsConverter {
     final List<String> arguments = [
       '-y',
       '-i',
-      '"$inputPath"',
+      _escapeArgument(inputPath),
       '-map',
       '0:a:0',
       '-af',
@@ -27,10 +32,10 @@ class FFmpegMacOsConverter {
       '1',
       '-c:a',
       'pcm_s16le',
-      '"$outputPath"',
+      _escapeArgument(outputPath),
     ];
 
-    debugPrint('⚙️ [FFMPEG][macOS] $inputPath -> $outputPath');
+    debugPrint('[FFMPEG][macOS] $inputPath -> $outputPath');
 
     final FFmpegSession session = await FFmpegKit.execute(arguments.join(' '));
     final ReturnCode? returnCode = await session.getReturnCode();

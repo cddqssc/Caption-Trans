@@ -150,7 +150,7 @@ class TranscriptionPanel extends StatelessWidget {
   }
 
   bool get _isProcessing =>
-      state is RuntimePreparing ||
+      state is ModelPreparing ||
       state is AudioTranscoding ||
       state is Transcribing;
 
@@ -161,7 +161,6 @@ class TranscriptionPanel extends StatelessWidget {
 
   WhisperRuntimeInfo? get _runtimeInfo {
     final TranscriptionState currentState = state;
-    if (currentState is RuntimePreparing) return currentState.runtimeInfo;
     if (currentState is AudioTranscoding) return currentState.runtimeInfo;
     if (currentState is Transcribing) return currentState.runtimeInfo;
     if (currentState is TranscriptionComplete) return currentState.runtimeInfo;
@@ -185,11 +184,9 @@ class TranscriptionPanel extends StatelessWidget {
   }
 
   Widget _buildStatusWidget(BuildContext context, AppLocalizations l10n) {
-    final theme = Theme.of(context);
-
-    if (state is RuntimePreparing) {
-      final s = state as RuntimePreparing;
-      final String label = _runtimePreparingLabel(l10n, s.phase);
+    if (state is ModelPreparing) {
+      final s = state as ModelPreparing;
+      final String label = _modelPreparingLabel(l10n, s.phase);
       if (s.progress != null) {
         return _buildProgressRow(
           context,
@@ -220,9 +217,7 @@ class TranscriptionPanel extends StatelessWidget {
       final s = state as Transcribing;
       final String base = switch (s.phase) {
         TranscribingPhase.loadingAudio => l10n.transcriptionLoadingAudio,
-        TranscribingPhase.preparingModel => l10n.transcriptionPreparingModel,
         TranscribingPhase.transcribing => l10n.transcriptionRunning,
-        TranscribingPhase.aligning => l10n.transcriptionAligning,
         TranscribingPhase.finalizing => l10n.transcriptionFinalizing,
       };
       final String detail = (s.statusDetail ?? '').trim();
@@ -247,7 +242,7 @@ class TranscriptionPanel extends StatelessWidget {
           const SizedBox(width: 8),
           Text(
             l10n.segmentsExtracted(s.result.segments.length, s.result.language),
-            style: theme.textTheme.bodySmall?.copyWith(
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
               color: Colors.greenAccent,
             ),
           ),
@@ -264,7 +259,7 @@ class TranscriptionPanel extends StatelessWidget {
           Expanded(
             child: Text(
               s.message,
-              style: theme.textTheme.bodySmall?.copyWith(
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 color: Colors.redAccent,
               ),
               maxLines: 2,
@@ -373,33 +368,32 @@ class TranscriptionPanel extends StatelessWidget {
     BuildContext context,
     WhisperRuntimeInfo runtimeInfo,
   ) {
-    final bool usingGpu = runtimeInfo.usingGpu;
-    final Color accent = usingGpu ? Colors.greenAccent : Colors.orangeAccent;
-
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.04),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: accent.withValues(alpha: 0.35)),
+        border: Border.all(
+          color: Colors.blueAccent.withValues(alpha: 0.35),
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(
-                usingGpu ? Icons.memory_rounded : Icons.developer_board_rounded,
+              const Icon(
+                Icons.developer_board_rounded,
                 size: 16,
-                color: accent,
+                color: Colors.blueAccent,
               ),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  usingGpu ? 'GPU acceleration active' : 'CPU transcription',
+                  runtimeInfo.modeLabel,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: accent,
+                    color: Colors.blueAccent,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
@@ -411,35 +405,13 @@ class TranscriptionPanel extends StatelessWidget {
             spacing: 8,
             runSpacing: 8,
             children: [
-              _buildRuntimeChip(runtimeInfo.modeLabel, accent),
+              _buildRuntimeChip(
+                'threads ${runtimeInfo.numThreads}',
+                Colors.white70,
+              ),
               if (runtimeInfo.deviceName != null &&
                   runtimeInfo.deviceName!.trim().isNotEmpty)
                 _buildRuntimeChip(runtimeInfo.deviceName!, Colors.white70),
-              _buildRuntimeChip(
-                'compute ${runtimeInfo.computeType}',
-                Colors.white70,
-              ),
-              _buildRuntimeChip(
-                'batch ${runtimeInfo.batchSize}',
-                Colors.white70,
-              ),
-              if (runtimeInfo.physicalCpuCount != null ||
-                  runtimeInfo.logicalCpuCount != null)
-                _buildRuntimeChip(
-                  _buildCpuCountLabel(runtimeInfo),
-                  Colors.white70,
-                ),
-              if (runtimeInfo.recommendedCpuThreads != null)
-                _buildRuntimeChip(
-                  'threads ${runtimeInfo.recommendedCpuThreads}',
-                  Colors.white70,
-                ),
-              if (runtimeInfo.torchCudaVersion != null &&
-                  runtimeInfo.torchCudaVersion!.trim().isNotEmpty)
-                _buildRuntimeChip(
-                  'torch CUDA ${runtimeInfo.torchCudaVersion!}',
-                  Colors.white70,
-                ),
             ],
           ),
           if (runtimeInfo.note != null &&
@@ -452,30 +424,9 @@ class TranscriptionPanel extends StatelessWidget {
               ),
             ),
           ],
-          if (!usingGpu && runtimeInfo.cudaAvailable) ...[
-            const SizedBox(height: 8),
-            Text(
-              'CUDA is available, but this run is using CPU fallback.',
-              style: Theme.of(
-                context,
-              ).textTheme.labelSmall?.copyWith(color: Colors.orangeAccent),
-            ),
-          ],
         ],
       ),
     );
-  }
-
-  String _buildCpuCountLabel(WhisperRuntimeInfo runtimeInfo) {
-    final int? physical = runtimeInfo.physicalCpuCount;
-    final int? logical = runtimeInfo.logicalCpuCount;
-    if (physical != null && logical != null) {
-      return 'cpu $physical phys / $logical log';
-    }
-    if (physical != null) {
-      return 'cpu $physical phys';
-    }
-    return 'cpu ${logical!} log';
   }
 
   Widget _buildRuntimeChip(String label, Color color) {
@@ -497,23 +448,19 @@ class TranscriptionPanel extends StatelessWidget {
     );
   }
 
-  String _runtimePreparingLabel(
+  String _modelPreparingLabel(
     AppLocalizations l10n,
-    RuntimePreparingPhase phase,
+    ModelPreparingPhase phase,
   ) {
     switch (phase) {
-      case RuntimePreparingPhase.checkingRuntime:
+      case ModelPreparingPhase.checkingModel:
         return l10n.runtimeChecking;
-      case RuntimePreparingPhase.downloadingRuntime:
+      case ModelPreparingPhase.downloadingModel:
         return l10n.runtimeDownloading;
-      case RuntimePreparingPhase.extractingRuntime:
+      case ModelPreparingPhase.extractingModel:
         return l10n.runtimeExtracting;
-      case RuntimePreparingPhase.creatingEnvironment:
-        return l10n.runtimeCreatingEnvironment;
-      case RuntimePreparingPhase.installingDependencies:
-        return l10n.runtimeInstallingDependencies;
-      case RuntimePreparingPhase.startingSidecar:
-        return l10n.runtimeStartingSidecar;
+      case ModelPreparingPhase.loadingModel:
+        return l10n.transcriptionPreparingModel;
     }
   }
 

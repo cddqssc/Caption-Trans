@@ -5,19 +5,19 @@ import 'package:caption_trans/converter/ffmpeg_windows.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
-/// Converts media input into WhisperX-ready WAV audio.
+/// Converts media input into WAV audio suitable for speech recognition.
 class MediaToWavConverter {
   /// Convert [inputPath] to 16kHz mono 16-bit WAV if needed.
   ///
   /// If [inputPath] is already a WAV file, returns [inputPath].
-  Future<String> ensureWhisperxWav(String inputPath) async {
+  Future<String> ensureWav(String inputPath) async {
     if (p.extension(inputPath).toLowerCase() == '.wav') {
       return inputPath;
     }
 
     final tempDir = await getTemporaryDirectory();
     final outputDir = Directory(
-      p.join(tempDir.path, 'caption_trans', 'whisperx'),
+      p.join(tempDir.path, 'caption_trans', 'wav_cache'),
     );
     await outputDir.create(recursive: true);
 

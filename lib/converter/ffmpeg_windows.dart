@@ -3,9 +3,14 @@ import 'package:flutter/foundation.dart';
 
 /// FFmpeg converter for Windows.
 ///
-/// Converts media into 16kHz mono 16-bit PCM WAV which WhisperX accepts.
+/// Converts media into 16kHz mono 16-bit PCM WAV suitable for speech recognition.
 class FFmpegWindowsConverter {
   FFmpegWindowsConverter._();
+
+  static String _escapeArgument(String path) {
+    final escaped = path.replaceAll('"', r'\"');
+    return '"$escaped"';
+  }
 
   static Future<void> convertToWav({
     required String inputPath,
@@ -14,7 +19,7 @@ class FFmpegWindowsConverter {
     final List<String> arguments = [
       '-y',
       '-i',
-      '"$inputPath"',
+      _escapeArgument(inputPath),
       '-map',
       '0:a:0',
       '-af',
@@ -25,10 +30,10 @@ class FFmpegWindowsConverter {
       '1',
       '-c:a',
       'pcm_s16le',
-      '"$outputPath"',
+      _escapeArgument(outputPath),
     ];
 
-    debugPrint('⚙️ [FFMPEG][Windows] $inputPath -> $outputPath');
+    debugPrint('[FFMPEG][Windows] $inputPath -> $outputPath');
 
     final FFmpegSession session = FFmpegKit.execute(arguments.join(' '));
     final int returnCode = session.getReturnCode();
