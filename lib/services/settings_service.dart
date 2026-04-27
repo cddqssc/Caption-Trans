@@ -30,6 +30,10 @@ class SettingsService {
   static const String _keyTargetLanguage = 'target_language';
   static const String _keyBilingual = 'bilingual';
   static const String _keyBatchSize = 'batch_size';
+  static const String _keyAutoProcessTranscription =
+      'auto_process_transcription';
+  static const String _keyAutoProcessTranslation = 'auto_process_translation';
+  static const String _keyBatchMaxRetries = 'batch_max_retries';
   static const String _keyLastUpdateCheckAt = 'last_update_check_at';
   static const String _keyWhisperDownloadSource = 'whisper_download_source';
 
@@ -77,6 +81,26 @@ class SettingsService {
 
   int get batchSize => _prefs.getInt(_keyBatchSize) ?? 25;
   Future<void> setBatchSize(int value) => _prefs.setInt(_keyBatchSize, value);
+
+  bool get autoProcessTranscription =>
+      _prefs.getBool(_keyAutoProcessTranscription) ?? false;
+  Future<void> setAutoProcessTranscription(bool value) =>
+      _prefs.setBool(_keyAutoProcessTranscription, value);
+
+  bool get autoProcessTranslation =>
+      _prefs.getBool(_keyAutoProcessTranslation) ?? false;
+  Future<void> setAutoProcessTranslation(bool value) =>
+      _prefs.setBool(_keyAutoProcessTranslation, value);
+
+  int get batchMaxRetries {
+    final int retries = _prefs.getInt(_keyBatchMaxRetries) ?? 3;
+    return retries.clamp(1, 10);
+  }
+
+  Future<void> setBatchMaxRetries(int value) {
+    final int normalized = value.clamp(1, 10);
+    return _prefs.setInt(_keyBatchMaxRetries, normalized);
+  }
 
   DateTime? get lastUpdateCheckAt {
     final timestamp = _prefs.getInt(_keyLastUpdateCheckAt);

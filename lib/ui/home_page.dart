@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -50,6 +51,37 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
+class _BatchQueueItem {
+  final String videoPath;
+  final String fileName;
+  _BatchQueueStage stage;
+  int transcriptionAttempts;
+  int translationAttempts;
+  int exportAttempts;
+  String? lastError;
+
+  _BatchQueueItem({required this.videoPath})
+    : fileName = p.basename(videoPath),
+      stage = _BatchQueueStage.pending,
+      transcriptionAttempts = 0,
+      translationAttempts = 0,
+      exportAttempts = 0,
+      lastError = null;
+}
+
+enum _BatchQueueStage {
+  pending,
+  transcribing,
+  transcriptionFailed,
+  transcriptionDone,
+  translating,
+  translationFailed,
+  exporting,
+  exportFailed,
+  completed,
+  skipped,
+}
+
 class _HomePageState extends State<HomePage> {
   String _selectedModel = AppConstants.defaultWhisperModel;
   String _sourceVideoLanguage = 'ja';
@@ -65,6 +97,13 @@ class _HomePageState extends State<HomePage> {
   bool _isLoadingModels = false;
   Map<String, ProviderCredential> _savedProviderCredentials = {};
   final UpdateService _updateService = UpdateService();
+  final List<_BatchQueueItem> _batchQueue = <_BatchQueueItem>[];
+
+  int _currentQueueIndex = -1;
+  bool _autoProcessTranscription = false;
+  bool _autoProcessTranslation = false;
+  int _maxStageAttempts = 3;
+  bool _isQueueRunning = false;
 
   Project? _activeProject;
 
@@ -98,6 +137,10 @@ class _HomePageState extends State<HomePage> {
       _targetLanguage = widget.settingsService.targetLanguage;
       _bilingual = widget.settingsService.bilingual;
       _batchSize = widget.settingsService.batchSize;
+      _autoProcessTranscription =
+          widget.settingsService.autoProcessTranscription;
+      _autoProcessTranslation = widget.settingsService.autoProcessTranslation;
+      _maxStageAttempts = widget.settingsService.batchMaxRetries;
     });
 
     if (_apiKey.isNotEmpty) {
@@ -371,6 +414,278 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  bool _isProcessingTranscriptionState(TranscriptionState state) {
+    return state is RuntimePreparing ||
+        state is AudioTranscoding ||
+        state is Transcribing;
+  }
+
+  String? _stateVideoPath(TranscriptionState state) {
+    if (state is VideoSelected) return state.videoPath;
+    if (state is RuntimePreparing) return state.videoPath;
+    if (state is AudioTranscoding) return state.videoPath;
+    if (state is Transcribing) return state.videoPath;
+    if (state is TranscriptionComplete) return state.videoPath;
+    if (state is TranscriptionError) return state.videoPath;
+    return null;
+  }
+
+  _BatchQueueItem? get _currentBatchItem {
+    if (_currentQueueIndex < 0 || _currentQueueIndex >= _batchQueue.length) {
+      return null;
+    }
+    return _batchQueue[_currentQueueIndex];
+  }
+
+  String? get _videoPickerDisplayName {
+    final item = _currentBatchItem;
+    if (item != null) {
+      final int position = _currentQueueIndex + 1;
+      return '${item.fileName} ($position/${_batchQueue.length})';
+    }
+    return null;
+  }
+
+  Future<void> _startQueueItemTranscription(
+    BuildContext context,
+    _BatchQueueItem item,
+  ) async {
+    final bool ready = await _ensureDownloadSourceSelected(context);
+    if (!ready || !mounted) {
+      return;
+    }
+
+    item.transcriptionAttempts += 1;
+  item.lastError = null;
+  item.stage = _BatchQueueStage.transcribing;
+    context.read<TranslationBloc>().add(const ResetTranslation());
+    context.read<TranscriptionBloc>().add(SelectVideo(item.videoPath));
+    context.read<TranscriptionBloc>().add(
+      StartTranscription(
+        modelName: _selectedModel,
+        language: _sourceVideoLanguage,
+      ),
+    );
+  }
+
+  Future<void> _tryStartQueue(BuildContext context) async {
+    if (!_autoProcessTranscription ||
+        _batchQueue.isEmpty ||
+        !_isQueueRunning ||
+        !mounted) {
+      return;
+    }
+
+    if (_currentQueueIndex < 0) {
+      setState(() {
+        _currentQueueIndex = 0;
+      });
+    }
+
+    final item = _currentBatchItem;
+    if (item == null) {
+      return;
+    }
+
+    final transcriptionState = context.read<TranscriptionBloc>().state;
+    final currentPath = _stateVideoPath(transcriptionState);
+
+    if (_isProcessingTranscriptionState(transcriptionState) &&
+        currentPath == item.videoPath) {
+      return;
+    }
+
+    await _startQueueItemTranscription(context, item);
+    if (!mounted) {
+      return;
+    }
+    setState(() {});
+  }
+
+  void _advanceQueue(BuildContext context) {
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _currentQueueIndex += 1;
+      if (_currentQueueIndex >= _batchQueue.length) {
+        _isQueueRunning = false;
+        _currentQueueIndex = _batchQueue.isEmpty ? -1 : _batchQueue.length - 1;
+      }
+    });
+
+    if (_isQueueRunning) {
+      _tryStartQueue(context);
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Batch queue finished (${_batchQueue.length} files).'),
+        backgroundColor: Colors.green.shade700,
+      ),
+    );
+  }
+
+  Future<bool> _autoExportToSourceDirectory(
+    BuildContext context,
+    _BatchQueueItem item,
+    List<SubtitleSegment> segments,
+  ) async {
+    while (item.exportAttempts < _maxStageAttempts) {
+      item.exportAttempts += 1;
+      try {
+        final bool hasTranslation =
+            _countVisibleTranslationSegments(segments) > 0;
+        final bool translatedOnly = hasTranslation && !_bilingual;
+        final bool bilingual = hasTranslation && _bilingual;
+        final srtContent = SrtParser.generate(
+          segments,
+          useTranslation: translatedOnly,
+          bilingual: bilingual,
+        );
+        final baseName = p.basenameWithoutExtension(item.fileName);
+        final outputPath = p.join(p.dirname(item.videoPath), '$baseName.srt');
+        await File(outputPath).writeAsString(srtContent);
+        item.stage = _BatchQueueStage.completed;
+        if (!context.mounted) {
+          return true;
+        }
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Auto exported: $outputPath'),
+            backgroundColor: Colors.green.shade700,
+          ),
+        );
+        return true;
+      } catch (e) {
+        item.lastError = e.toString();
+        item.stage = _BatchQueueStage.exportFailed;
+        // Retry until max attempts.
+      }
+    }
+    return false;
+  }
+
+  void _handleBatchTranscriptionState(
+    BuildContext context,
+    TranscriptionState state,
+  ) {
+    if (!_isQueueRunning) {
+      return;
+    }
+
+    final item = _currentBatchItem;
+    if (item == null || _stateVideoPath(state) != item.videoPath) {
+      return;
+    }
+
+    if (state is TranscriptionError) {
+      item.lastError = state.message;
+      item.stage = _BatchQueueStage.transcriptionFailed;
+      if (item.transcriptionAttempts < _maxStageAttempts) {
+        _startQueueItemTranscription(context, item);
+        return;
+      }
+      item.stage = _BatchQueueStage.skipped;
+      _advanceQueue(context);
+      return;
+    }
+
+    if (state is TranscriptionComplete) {
+      item.stage = _BatchQueueStage.transcriptionDone;
+      if (_autoProcessTranslation) {
+        final translationState = context.read<TranslationBloc>().state;
+        item.translationAttempts += 1;
+        item.lastError = null;
+        item.stage = _BatchQueueStage.translating;
+        _startTranslation(
+          context,
+          translationState: translationState,
+          transcriptionState: state,
+        );
+      } else {
+        item.stage = _BatchQueueStage.completed;
+        _advanceQueue(context);
+      }
+    }
+  }
+
+  Future<void> _handleBatchTranslationState(
+    BuildContext context,
+    TranslationState state,
+  ) async {
+    if (!_isQueueRunning || !_autoProcessTranslation) {
+      return;
+    }
+
+    final item = _currentBatchItem;
+    if (item == null) {
+      return;
+    }
+    final transcriptionState = context.read<TranscriptionBloc>().state;
+    if (_stateVideoPath(transcriptionState) != item.videoPath) {
+      return;
+    }
+
+    if (state is TranslationError) {
+      item.lastError = state.message;
+      item.stage = _BatchQueueStage.translationFailed;
+      if (item.translationAttempts < _maxStageAttempts) {
+        item.translationAttempts += 1;
+        item.stage = _BatchQueueStage.translating;
+        _startTranslation(
+          context,
+          translationState: state,
+          transcriptionState: transcriptionState,
+          retryFailedOnly: true,
+        );
+        return;
+      }
+      item.stage = _BatchQueueStage.skipped;
+      _advanceQueue(context);
+      return;
+    }
+
+    if (state is TranslationComplete) {
+      item.stage = _BatchQueueStage.exporting;
+      final exported = await _autoExportToSourceDirectory(
+        context,
+        item,
+        state.translatedSegments,
+      );
+      if (!mounted) {
+        return;
+      }
+
+      if (!exported) {
+        item.stage = _BatchQueueStage.skipped;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Auto export failed after $_maxStageAttempts attempts: ${item.fileName}',
+            ),
+            backgroundColor: Colors.red.shade700,
+          ),
+        );
+      }
+      _advanceQueue(context);
+    }
+  }
+
+  void _clearBatchQueue() {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _batchQueue.clear();
+      _currentQueueIndex = -1;
+      _isQueueRunning = false;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
@@ -402,6 +717,10 @@ class _HomePageState extends State<HomePage> {
                   ),
                   const SizedBox(height: 12),
                   _buildStepOnePanels(isMobilePlatform),
+                  if (_batchQueue.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    _buildBatchQueuePanel(context),
+                  ],
 
                   const SizedBox(height: 32),
 
@@ -427,6 +746,30 @@ class _HomePageState extends State<HomePage> {
                           _handleStartTranscription(context);
                         },
                       );
+                    },
+                  ),
+                  CheckboxListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Auto process extraction queue'),
+                    subtitle: const Text(
+                      'Run extraction continuously for selected files (max 3 attempts per file).',
+                    ),
+                    value: _autoProcessTranscription,
+                    onChanged: (value) {
+                      final bool next = value ?? false;
+                      setState(() {
+                        _autoProcessTranscription = next;
+                        if (_autoProcessTranscription && _batchQueue.isNotEmpty) {
+                          _isQueueRunning = true;
+                          if (_currentQueueIndex < 0) {
+                            _currentQueueIndex = 0;
+                          }
+                        } else if (!_autoProcessTranscription) {
+                          _isQueueRunning = false;
+                        }
+                      });
+                      widget.settingsService.setAutoProcessTranscription(next);
+                      _tryStartQueue(context);
                     },
                   ),
 
@@ -484,6 +827,8 @@ class _HomePageState extends State<HomePage> {
                           config: state.config ?? currentConfig,
                         );
                       }
+
+                      unawaited(_handleBatchTranslationState(context, state));
                     },
                     builder: (context, translationState) {
                       return BlocBuilder<TranscriptionBloc, TranscriptionState>(
@@ -576,6 +921,39 @@ class _HomePageState extends State<HomePage> {
                       );
                     },
                   ),
+                  CheckboxListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Auto process translation queue'),
+                    subtitle: const Text(
+                      'Retry translation errors automatically and continue queue (max 3 attempts per file).',
+                    ),
+                    value: _autoProcessTranslation,
+                    onChanged: (value) {
+                      final bool next = value ?? false;
+                      setState(() {
+                        _autoProcessTranslation = next;
+                      });
+                      widget.settingsService.setAutoProcessTranslation(next);
+                    },
+                  ),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text('Max retries per stage: $_maxStageAttempts'),
+                    subtitle: Slider(
+                      value: _maxStageAttempts.toDouble(),
+                      min: 1,
+                      max: 10,
+                      divisions: 9,
+                      label: '$_maxStageAttempts',
+                      onChanged: (value) {
+                        final int next = value.round();
+                        setState(() {
+                          _maxStageAttempts = next;
+                        });
+                        widget.settingsService.setBatchMaxRetries(next);
+                      },
+                    ),
+                  ),
 
                   const SizedBox(height: 32),
 
@@ -620,6 +998,151 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  Widget _buildBatchQueuePanel(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Batch Queue (${_batchQueue.length})',
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _isQueueRunning ? 'Running...' : 'Idle',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: _isQueueRunning
+                    ? Colors.lightBlueAccent
+                    : Colors.white.withValues(alpha: 0.65),
+              ),
+            ),
+            const SizedBox(height: 12),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 240),
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: _batchQueue.length,
+                separatorBuilder: (_, _) => Divider(
+                  height: 1,
+                  color: Colors.white.withValues(alpha: 0.08),
+                ),
+                itemBuilder: (context, index) {
+                  final item = _batchQueue[index];
+                  final bool isCurrent = index == _currentQueueIndex;
+                  return ListTile(
+                    dense: true,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 2,
+                    ),
+                    leading: Icon(
+                      _queueStageIcon(item.stage),
+                      color: _queueStageColor(item.stage),
+                      size: 18,
+                    ),
+                    title: Text(
+                      item.fileName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontWeight: isCurrent
+                            ? FontWeight.w700
+                            : FontWeight.w500,
+                      ),
+                    ),
+                    subtitle: Text(
+                      '${_queueStageLabel(item.stage)} | E:${item.transcriptionAttempts}/$_maxStageAttempts T:${item.translationAttempts}/$_maxStageAttempts X:${item.exportAttempts}/$_maxStageAttempts'
+                      '${item.lastError == null ? '' : '\n${item.lastError}'}',
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    trailing: isCurrent
+                        ? const Icon(
+                            Icons.play_arrow_rounded,
+                            color: Colors.lightBlueAccent,
+                            size: 18,
+                          )
+                        : null,
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _queueStageLabel(_BatchQueueStage stage) {
+    switch (stage) {
+      case _BatchQueueStage.pending:
+        return 'Pending';
+      case _BatchQueueStage.transcribing:
+        return 'Extracting';
+      case _BatchQueueStage.transcriptionFailed:
+        return 'Extract Failed';
+      case _BatchQueueStage.transcriptionDone:
+        return 'Extracted';
+      case _BatchQueueStage.translating:
+        return 'Translating';
+      case _BatchQueueStage.translationFailed:
+        return 'Translation Failed';
+      case _BatchQueueStage.exporting:
+        return 'Exporting';
+      case _BatchQueueStage.exportFailed:
+        return 'Export Failed';
+      case _BatchQueueStage.completed:
+        return 'Completed';
+      case _BatchQueueStage.skipped:
+        return 'Skipped';
+    }
+  }
+
+  IconData _queueStageIcon(_BatchQueueStage stage) {
+    switch (stage) {
+      case _BatchQueueStage.pending:
+        return Icons.schedule_rounded;
+      case _BatchQueueStage.transcribing:
+      case _BatchQueueStage.translating:
+      case _BatchQueueStage.exporting:
+        return Icons.autorenew_rounded;
+      case _BatchQueueStage.transcriptionFailed:
+      case _BatchQueueStage.translationFailed:
+      case _BatchQueueStage.exportFailed:
+      case _BatchQueueStage.skipped:
+        return Icons.error_outline_rounded;
+      case _BatchQueueStage.transcriptionDone:
+        return Icons.checklist_rounded;
+      case _BatchQueueStage.completed:
+        return Icons.check_circle_rounded;
+    }
+  }
+
+  Color _queueStageColor(_BatchQueueStage stage) {
+    switch (stage) {
+      case _BatchQueueStage.pending:
+        return Colors.white70;
+      case _BatchQueueStage.transcribing:
+      case _BatchQueueStage.translating:
+      case _BatchQueueStage.exporting:
+        return Colors.lightBlueAccent;
+      case _BatchQueueStage.transcriptionFailed:
+      case _BatchQueueStage.translationFailed:
+      case _BatchQueueStage.exportFailed:
+      case _BatchQueueStage.skipped:
+        return Colors.redAccent;
+      case _BatchQueueStage.transcriptionDone:
+        return Colors.amberAccent;
+      case _BatchQueueStage.completed:
+        return Colors.greenAccent;
+    }
+  }
+
   Widget _buildVideoPickerPanel() {
     return BlocConsumer<TranscriptionBloc, TranscriptionState>(
       listener: (context, state) {
@@ -642,18 +1165,24 @@ class _HomePageState extends State<HomePage> {
             // Update existing active project if for some reason transcription completes again
             // Should not really happen on normal resume since it bypasses extraction
           }
+          _handleBatchTranscriptionState(context, state);
+        } else if (state is TranscriptionError) {
+          _handleBatchTranscriptionState(context, state);
         } else if (state is TranscriptionInitial || state is VideoSelected) {
           _activeProject = null; // Reset on new video pick
         }
       },
       builder: (context, state) {
         return VideoPickerCard(
-          selectedFileName: _getFileName(state),
+          selectedFileName: _videoPickerDisplayName ?? _getFileName(state),
           onPickVideo: () => _pickVideo(context),
           onClear: state is! TranscriptionInitial
-              ? () => context.read<TranscriptionBloc>().add(
-                  const ResetTranscription(),
-                )
+              ? () {
+                  _clearBatchQueue();
+                  context.read<TranscriptionBloc>().add(
+                    const ResetTranscription(),
+                  );
+                }
               : null,
         );
       },
@@ -756,15 +1285,39 @@ class _HomePageState extends State<HomePage> {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: AppConstants.videoExtensions,
+      allowMultiple: true,
     );
 
-    if (result != null && result.files.single.path != null) {
-      if (context.mounted) {
-        context.read<TranscriptionBloc>().add(
-          SelectVideo(result.files.single.path!),
-        );
-        context.read<TranslationBloc>().add(const ResetTranslation());
-      }
+    final List<String> paths = result?.files
+            .map((file) => file.path)
+            .whereType<String>()
+            .toList() ??
+        const <String>[];
+    if (paths.isEmpty || !context.mounted) {
+      return;
+    }
+
+    setState(() {
+      _batchQueue
+        ..clear()
+        ..addAll(paths.map((path) => _BatchQueueItem(videoPath: path)));
+      _currentQueueIndex = _batchQueue.isEmpty ? -1 : 0;
+      _isQueueRunning = _autoProcessTranscription && _batchQueue.isNotEmpty;
+    });
+
+    context.read<TranscriptionBloc>().add(SelectVideo(paths.first));
+    context.read<TranslationBloc>().add(const ResetTranslation());
+
+    if (_isQueueRunning) {
+      _tryStartQueue(context);
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Selected ${paths.length} file(s). Enable auto extraction to process queue.',
+          ),
+        ),
+      );
     }
   }
 

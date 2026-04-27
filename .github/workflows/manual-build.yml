@@ -1,0 +1,121 @@
+name: Manual Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch, tag, or commit SHA to build'
+        required: true
+        default: 'main'
+        type: string
+      platform:
+        description: 'Target platform to build'
+        required: true
+        default: 'windows'
+        type: choice
+        options:
+          - windows
+          - macos
+          - all
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-macos:
+    name: Build macOS (M-Series)
+    if: ${{ inputs.platform == 'macos' || inputs.platform == 'all' }}
+    runs-on: macos-14
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build macOS
+        run: |
+          flutter clean
+          flutter build macos --release
+
+      - name: Create DMG
+        run: |
+          APP_NAME="caption_trans"
+          BUILD_PATH="build/macos/Build/Products/Release/${APP_NAME}.app"
+          DMG_NAME="${APP_NAME}-macos-arm64-${{ github.run_number }}.dmg"
+
+          mkdir -p dmg_content
+          cp -R "$BUILD_PATH" dmg_content/
+          ln -s /Applications dmg_content/Applications
+
+          hdiutil create -volname "$APP_NAME" -srcfolder dmg_content -ov -format UDZO "$DMG_NAME"
+
+          rm -rf dmg_content
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg-${{ github.run_number }}
+          path: caption_trans-macos-arm64-${{ github.run_number }}.dmg
+
+  build-windows:
+    name: Build Windows
+    if: ${{ inputs.platform == 'windows' || inputs.platform == 'all' }}
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build Windows
+        run: |
+          flutter clean
+          flutter build windows --release
+
+      - name: Package Windows
+        shell: pwsh
+        run: |
+          $APP_NAME = "caption_trans"
+          $WORKSPACE = "${{ github.workspace }}"
+          $RELEASE_DIR = Join-Path $WORKSPACE "build\windows\x64\runner\Release"
+          $ZIP_NAME = Join-Path $WORKSPACE "${APP_NAME}-windows-x64-${{ github.run_number }}.zip"
+
+          Write-Host "Looking for Release directory at: $RELEASE_DIR"
+
+          if (!(Test-Path $RELEASE_DIR)) {
+            Write-Error "!!! 找不到 Release 目录 !!!"
+            Write-Host "打印 build\windows 目录结构用于排查："
+            Get-ChildItem -Path "$WORKSPACE\build\windows" -Recurse -Depth 3 | Select-Object FullName
+            exit 1
+          }
+
+          Write-Host "Found Release directory. Packaging..."
+          Compress-Archive -Path "$RELEASE_DIR\*" -DestinationPath "$ZIP_NAME" -Force
+          Write-Host "Successfully created $ZIP_NAME"
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-zip-${{ github.run_number }}
+          path: caption_trans-windows-x64-${{ github.run_number }}.zip
