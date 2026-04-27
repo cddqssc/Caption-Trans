@@ -349,5 +349,112 @@ class AppLocalizationsZh extends AppLocalizations {
   String get updateCheckFailed => '检查更新失败。';
 
   @override
+  String batchQueueFinished(int count) {
+    return '队列处理完成（共 $count 个文件）。';
+  }
+
+  @override
+  String autoExported(String path) {
+    return '已自动导出：$path';
+  }
+
+  @override
+  String autoExportFailed(int maxAttempts, String fileName) {
+    return '自动导出失败，已重试 $maxAttempts 次：$fileName';
+  }
+
+  @override
+  String get selectedFilesAlreadyInQueue => '所选文件已在队列中。';
+
+  @override
+  String batchQueueAdded(int count) {
+    return '已添加 $count 个文件到队列。';
+  }
+
+  @override
+  String batchQueueAddedEnableAuto(int count) {
+    return '已添加 $count 个文件。开启自动提取后将开始队列处理。';
+  }
+
+  @override
+  String batchQueueAddedWithDuplicates(int addedCount, int duplicateCount) {
+    return '已添加 $addedCount 个文件，$duplicateCount 个重复任务已跳过。';
+  }
+
+  @override
+  String get queueAutomationSettingsTitle => '队列自动化设置';
+
+  @override
+  String get removeQueueTask => '移除任务';
+
+  @override
+  String get cannotRemoveActiveQueueTask => '当前任务正在处理中，无法移除。';
+
+  @override
+  String queueTaskRemoved(String fileName) {
+    return '已从队列移除：$fileName';
+  }
+
+  @override
+  String get autoProcessExtractionQueueTitle => '自动处理提取队列';
+
+  @override
+  String get autoProcessExtractionQueueSubtitle =>
+      '对已选择文件连续执行提取（每个文件最多重试 3 次）。';
+
+  @override
+  String get autoProcessTranslationQueueTitle => '自动处理翻译队列';
+
+  @override
+  String get autoProcessTranslationQueueSubtitle =>
+      '翻译失败时自动重试并继续队列（每个文件最多重试 3 次）。';
+
+  @override
+  String maxRetriesPerStage(int maxRetries) {
+    return '每阶段最大重试次数：$maxRetries';
+  }
+
+  @override
+  String batchQueueTitle(int count) {
+    return '批处理队列（$count）';
+  }
+
+  @override
+  String get queueRunning => '运行中...';
+
+  @override
+  String get queueIdle => '空闲';
+
+  @override
+  String get queueStagePending => '待处理';
+
+  @override
+  String get queueStageExtracting => '提取中';
+
+  @override
+  String get queueStageExtractFailed => '提取失败';
+
+  @override
+  String get queueStageExtracted => '已提取';
+
+  @override
+  String get queueStageTranslating => '翻译中';
+
+  @override
+  String get queueStageTranslationFailed => '翻译失败';
+
+  @override
+  String get queueStageExporting => '导出中';
+
+  @override
+  String get queueStageExportFailed => '导出失败';
+
+  @override
+  String get queueStageCompleted => '已完成';
+
+  @override
+  String get queueStageSkipped => '已跳过';
+
+  @override
   String get releaseNotes => '更新说明';
 }

@@ -177,5 +177,103 @@
     }
   },
   "updateCheckFailed": "Failed to check for updates.",
+  "batchQueueFinished": "Batch queue finished ({count} files).",
+  "@batchQueueFinished": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "autoExported": "Auto exported: {path}",
+  "@autoExported": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "autoExportFailed": "Auto export failed after {maxAttempts} attempts: {fileName}",
+  "@autoExportFailed": {
+    "placeholders": {
+      "maxAttempts": {
+        "type": "int"
+      },
+      "fileName": {
+        "type": "String"
+      }
+    }
+  },
+  "selectedFilesAlreadyInQueue": "Selected files are already in queue.",
+  "batchQueueAdded": "Added {count} file(s) to queue.",
+  "@batchQueueAdded": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "batchQueueAddedEnableAuto": "Added {count} file(s). Enable auto extraction to process queue.",
+  "@batchQueueAddedEnableAuto": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "batchQueueAddedWithDuplicates": "Added {addedCount} file(s), {duplicateCount} duplicate task(s) were skipped.",
+  "@batchQueueAddedWithDuplicates": {
+    "placeholders": {
+      "addedCount": {
+        "type": "int"
+      },
+      "duplicateCount": {
+        "type": "int"
+      }
+    }
+  },
+  "queueAutomationSettingsTitle": "Queue automation settings",
+  "removeQueueTask": "Remove task",
+  "cannotRemoveActiveQueueTask": "Cannot remove the task currently being processed.",
+  "queueTaskRemoved": "Removed from queue: {fileName}",
+  "@queueTaskRemoved": {
+    "placeholders": {
+      "fileName": {
+        "type": "String"
+      }
+    }
+  },
+  "autoProcessExtractionQueueTitle": "Auto process extraction queue",
+  "autoProcessExtractionQueueSubtitle": "Run extraction continuously for selected files (max 3 attempts per file).",
+  "autoProcessTranslationQueueTitle": "Auto process translation queue",
+  "autoProcessTranslationQueueSubtitle": "Retry translation errors automatically and continue queue (max 3 attempts per file).",
+  "maxRetriesPerStage": "Max retries per stage: {maxRetries}",
+  "@maxRetriesPerStage": {
+    "placeholders": {
+      "maxRetries": {
+        "type": "int"
+      }
+    }
+  },
+  "batchQueueTitle": "Batch Queue ({count})",
+  "@batchQueueTitle": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "queueRunning": "Running...",
+  "queueIdle": "Idle",
+  "queueStagePending": "Pending",
+  "queueStageExtracting": "Extracting",
+  "queueStageExtractFailed": "Extract Failed",
+  "queueStageExtracted": "Extracted",
+  "queueStageTranslating": "Translating",
+  "queueStageTranslationFailed": "Translation Failed",
+  "queueStageExporting": "Exporting",
+  "queueStageExportFailed": "Export Failed",
+  "queueStageCompleted": "Completed",
+  "queueStageSkipped": "Skipped",
   "releaseNotes": "Release notes"
 }

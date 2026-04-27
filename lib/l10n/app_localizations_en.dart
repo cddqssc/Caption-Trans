@@ -359,5 +359,115 @@ class AppLocalizationsEn extends AppLocalizations {
   String get updateCheckFailed => 'Failed to check for updates.';
 
   @override
+  String batchQueueFinished(int count) {
+    return 'Batch queue finished ($count files).';
+  }
+
+  @override
+  String autoExported(String path) {
+    return 'Auto exported: $path';
+  }
+
+  @override
+  String autoExportFailed(int maxAttempts, String fileName) {
+    return 'Auto export failed after $maxAttempts attempts: $fileName';
+  }
+
+  @override
+  String get selectedFilesAlreadyInQueue =>
+      'Selected files are already in queue.';
+
+  @override
+  String batchQueueAdded(int count) {
+    return 'Added $count file(s) to queue.';
+  }
+
+  @override
+  String batchQueueAddedEnableAuto(int count) {
+    return 'Added $count file(s). Enable auto extraction to process queue.';
+  }
+
+  @override
+  String batchQueueAddedWithDuplicates(int addedCount, int duplicateCount) {
+    return 'Added $addedCount file(s), $duplicateCount duplicate task(s) were skipped.';
+  }
+
+  @override
+  String get queueAutomationSettingsTitle => 'Queue automation settings';
+
+  @override
+  String get removeQueueTask => 'Remove task';
+
+  @override
+  String get cannotRemoveActiveQueueTask =>
+      'Cannot remove the task currently being processed.';
+
+  @override
+  String queueTaskRemoved(String fileName) {
+    return 'Removed from queue: $fileName';
+  }
+
+  @override
+  String get autoProcessExtractionQueueTitle => 'Auto process extraction queue';
+
+  @override
+  String get autoProcessExtractionQueueSubtitle =>
+      'Run extraction continuously for selected files (max 3 attempts per file).';
+
+  @override
+  String get autoProcessTranslationQueueTitle =>
+      'Auto process translation queue';
+
+  @override
+  String get autoProcessTranslationQueueSubtitle =>
+      'Retry translation errors automatically and continue queue (max 3 attempts per file).';
+
+  @override
+  String maxRetriesPerStage(int maxRetries) {
+    return 'Max retries per stage: $maxRetries';
+  }
+
+  @override
+  String batchQueueTitle(int count) {
+    return 'Batch Queue ($count)';
+  }
+
+  @override
+  String get queueRunning => 'Running...';
+
+  @override
+  String get queueIdle => 'Idle';
+
+  @override
+  String get queueStagePending => 'Pending';
+
+  @override
+  String get queueStageExtracting => 'Extracting';
+
+  @override
+  String get queueStageExtractFailed => 'Extract Failed';
+
+  @override
+  String get queueStageExtracted => 'Extracted';
+
+  @override
+  String get queueStageTranslating => 'Translating';
+
+  @override
+  String get queueStageTranslationFailed => 'Translation Failed';
+
+  @override
+  String get queueStageExporting => 'Exporting';
+
+  @override
+  String get queueStageExportFailed => 'Export Failed';
+
+  @override
+  String get queueStageCompleted => 'Completed';
+
+  @override
+  String get queueStageSkipped => 'Skipped';
+
+  @override
   String get releaseNotes => 'Release notes';
 }

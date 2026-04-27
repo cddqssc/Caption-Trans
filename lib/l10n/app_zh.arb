@@ -130,5 +130,103 @@
     }
   },
   "updateCheckFailed": "检查更新失败。",
+  "batchQueueFinished": "队列处理完成（共 {count} 个文件）。",
+  "@batchQueueFinished": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "autoExported": "已自动导出：{path}",
+  "@autoExported": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "autoExportFailed": "自动导出失败，已重试 {maxAttempts} 次：{fileName}",
+  "@autoExportFailed": {
+    "placeholders": {
+      "maxAttempts": {
+        "type": "int"
+      },
+      "fileName": {
+        "type": "String"
+      }
+    }
+  },
+  "selectedFilesAlreadyInQueue": "所选文件已在队列中。",
+  "batchQueueAdded": "已添加 {count} 个文件到队列。",
+  "@batchQueueAdded": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "batchQueueAddedEnableAuto": "已添加 {count} 个文件。开启自动提取后将开始队列处理。",
+  "@batchQueueAddedEnableAuto": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "batchQueueAddedWithDuplicates": "已添加 {addedCount} 个文件，{duplicateCount} 个重复任务已跳过。",
+  "@batchQueueAddedWithDuplicates": {
+    "placeholders": {
+      "addedCount": {
+        "type": "int"
+      },
+      "duplicateCount": {
+        "type": "int"
+      }
+    }
+  },
+  "queueAutomationSettingsTitle": "队列自动化设置",
+  "removeQueueTask": "移除任务",
+  "cannotRemoveActiveQueueTask": "当前任务正在处理中，无法移除。",
+  "queueTaskRemoved": "已从队列移除：{fileName}",
+  "@queueTaskRemoved": {
+    "placeholders": {
+      "fileName": {
+        "type": "String"
+      }
+    }
+  },
+  "autoProcessExtractionQueueTitle": "自动处理提取队列",
+  "autoProcessExtractionQueueSubtitle": "对已选择文件连续执行提取（每个文件最多重试 3 次）。",
+  "autoProcessTranslationQueueTitle": "自动处理翻译队列",
+  "autoProcessTranslationQueueSubtitle": "翻译失败时自动重试并继续队列（每个文件最多重试 3 次）。",
+  "maxRetriesPerStage": "每阶段最大重试次数：{maxRetries}",
+  "@maxRetriesPerStage": {
+    "placeholders": {
+      "maxRetries": {
+        "type": "int"
+      }
+    }
+  },
+  "batchQueueTitle": "批处理队列（{count}）",
+  "@batchQueueTitle": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "queueRunning": "运行中...",
+  "queueIdle": "空闲",
+  "queueStagePending": "待处理",
+  "queueStageExtracting": "提取中",
+  "queueStageExtractFailed": "提取失败",
+  "queueStageExtracted": "已提取",
+  "queueStageTranslating": "翻译中",
+  "queueStageTranslationFailed": "翻译失败",
+  "queueStageExporting": "导出中",
+  "queueStageExportFailed": "导出失败",
+  "queueStageCompleted": "已完成",
+  "queueStageSkipped": "已跳过",
   "releaseNotes": "更新说明"
 }

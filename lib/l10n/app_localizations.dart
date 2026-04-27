@@ -734,6 +734,180 @@ abstract class AppLocalizations {
   /// **'Failed to check for updates.'**
   String get updateCheckFailed;
 
+  /// No description provided for @batchQueueFinished.
+  ///
+  /// In en, this message translates to:
+  /// **'Batch queue finished ({count} files).'**
+  String batchQueueFinished(int count);
+
+  /// No description provided for @autoExported.
+  ///
+  /// In en, this message translates to:
+  /// **'Auto exported: {path}'**
+  String autoExported(String path);
+
+  /// No description provided for @autoExportFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Auto export failed after {maxAttempts} attempts: {fileName}'**
+  String autoExportFailed(int maxAttempts, String fileName);
+
+  /// No description provided for @selectedFilesAlreadyInQueue.
+  ///
+  /// In en, this message translates to:
+  /// **'Selected files are already in queue.'**
+  String get selectedFilesAlreadyInQueue;
+
+  /// No description provided for @batchQueueAdded.
+  ///
+  /// In en, this message translates to:
+  /// **'Added {count} file(s) to queue.'**
+  String batchQueueAdded(int count);
+
+  /// No description provided for @batchQueueAddedEnableAuto.
+  ///
+  /// In en, this message translates to:
+  /// **'Added {count} file(s). Enable auto extraction to process queue.'**
+  String batchQueueAddedEnableAuto(int count);
+
+  /// No description provided for @batchQueueAddedWithDuplicates.
+  ///
+  /// In en, this message translates to:
+  /// **'Added {addedCount} file(s), {duplicateCount} duplicate task(s) were skipped.'**
+  String batchQueueAddedWithDuplicates(int addedCount, int duplicateCount);
+
+  /// No description provided for @queueAutomationSettingsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Queue automation settings'**
+  String get queueAutomationSettingsTitle;
+
+  /// No description provided for @removeQueueTask.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove task'**
+  String get removeQueueTask;
+
+  /// No description provided for @cannotRemoveActiveQueueTask.
+  ///
+  /// In en, this message translates to:
+  /// **'Cannot remove the task currently being processed.'**
+  String get cannotRemoveActiveQueueTask;
+
+  /// No description provided for @queueTaskRemoved.
+  ///
+  /// In en, this message translates to:
+  /// **'Removed from queue: {fileName}'**
+  String queueTaskRemoved(String fileName);
+
+  /// No description provided for @autoProcessExtractionQueueTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Auto process extraction queue'**
+  String get autoProcessExtractionQueueTitle;
+
+  /// No description provided for @autoProcessExtractionQueueSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Run extraction continuously for selected files (max 3 attempts per file).'**
+  String get autoProcessExtractionQueueSubtitle;
+
+  /// No description provided for @autoProcessTranslationQueueTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Auto process translation queue'**
+  String get autoProcessTranslationQueueTitle;
+
+  /// No description provided for @autoProcessTranslationQueueSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Retry translation errors automatically and continue queue (max 3 attempts per file).'**
+  String get autoProcessTranslationQueueSubtitle;
+
+  /// No description provided for @maxRetriesPerStage.
+  ///
+  /// In en, this message translates to:
+  /// **'Max retries per stage: {maxRetries}'**
+  String maxRetriesPerStage(int maxRetries);
+
+  /// No description provided for @batchQueueTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Batch Queue ({count})'**
+  String batchQueueTitle(int count);
+
+  /// No description provided for @queueRunning.
+  ///
+  /// In en, this message translates to:
+  /// **'Running...'**
+  String get queueRunning;
+
+  /// No description provided for @queueIdle.
+  ///
+  /// In en, this message translates to:
+  /// **'Idle'**
+  String get queueIdle;
+
+  /// No description provided for @queueStagePending.
+  ///
+  /// In en, this message translates to:
+  /// **'Pending'**
+  String get queueStagePending;
+
+  /// No description provided for @queueStageExtracting.
+  ///
+  /// In en, this message translates to:
+  /// **'Extracting'**
+  String get queueStageExtracting;
+
+  /// No description provided for @queueStageExtractFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Extract Failed'**
+  String get queueStageExtractFailed;
+
+  /// No description provided for @queueStageExtracted.
+  ///
+  /// In en, this message translates to:
+  /// **'Extracted'**
+  String get queueStageExtracted;
+
+  /// No description provided for @queueStageTranslating.
+  ///
+  /// In en, this message translates to:
+  /// **'Translating'**
+  String get queueStageTranslating;
+
+  /// No description provided for @queueStageTranslationFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Translation Failed'**
+  String get queueStageTranslationFailed;
+
+  /// No description provided for @queueStageExporting.
+  ///
+  /// In en, this message translates to:
+  /// **'Exporting'**
+  String get queueStageExporting;
+
+  /// No description provided for @queueStageExportFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Export Failed'**
+  String get queueStageExportFailed;
+
+  /// No description provided for @queueStageCompleted.
+  ///
+  /// In en, this message translates to:
+  /// **'Completed'**
+  String get queueStageCompleted;
+
+  /// No description provided for @queueStageSkipped.
+  ///
+  /// In en, this message translates to:
+  /// **'Skipped'**
+  String get queueStageSkipped;
+
   /// No description provided for @releaseNotes.
   ///
   /// In en, this message translates to:

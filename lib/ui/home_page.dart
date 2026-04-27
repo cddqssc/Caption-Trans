@@ -487,6 +487,12 @@ class _HomePageState extends State<HomePage> {
       return;
     }
 
+    if (item.stage == _BatchQueueStage.completed ||
+        item.stage == _BatchQueueStage.skipped) {
+      _advanceQueue(context);
+      return;
+    }
+
     final transcriptionState = context.read<TranscriptionBloc>().state;
     final currentPath = _stateVideoPath(transcriptionState);
 
@@ -520,9 +526,10 @@ class _HomePageState extends State<HomePage> {
       return;
     }
 
+    final l10n = AppLocalizations.of(context)!;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Batch queue finished (${_batchQueue.length} files).'),
+        content: Text(l10n.batchQueueFinished(_batchQueue.length)),
         backgroundColor: Colors.green.shade700,
       ),
     );
@@ -553,9 +560,10 @@ class _HomePageState extends State<HomePage> {
           return true;
         }
 
+        final l10n = AppLocalizations.of(context)!;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Auto exported: $outputPath'),
+            content: Text(l10n.autoExported(outputPath)),
             backgroundColor: Colors.green.shade700,
           ),
         );
@@ -661,11 +669,12 @@ class _HomePageState extends State<HomePage> {
       }
 
       if (!exported) {
+        final l10n = AppLocalizations.of(context)!;
         item.stage = _BatchQueueStage.skipped;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Auto export failed after $_maxStageAttempts attempts: ${item.fileName}',
+              l10n.autoExportFailed(_maxStageAttempts, item.fileName),
             ),
             backgroundColor: Colors.red.shade700,
           ),
@@ -684,6 +693,50 @@ class _HomePageState extends State<HomePage> {
       _currentQueueIndex = -1;
       _isQueueRunning = false;
     });
+  }
+
+  bool _isQueueStageRunning(_BatchQueueStage stage) {
+    return stage == _BatchQueueStage.transcribing ||
+        stage == _BatchQueueStage.translating ||
+        stage == _BatchQueueStage.exporting;
+  }
+
+  void _removeBatchQueueItem(BuildContext context, int index) {
+    if (index < 0 || index >= _batchQueue.length) {
+      return;
+    }
+
+    final l10n = AppLocalizations.of(context)!;
+    final item = _batchQueue[index];
+    final bool isCurrent = index == _currentQueueIndex;
+    if (isCurrent && _isQueueStageRunning(item.stage)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(l10n.cannotRemoveActiveQueueTask)),
+      );
+      return;
+    }
+
+    setState(() {
+      _batchQueue.removeAt(index);
+
+      if (_batchQueue.isEmpty) {
+        _currentQueueIndex = -1;
+        _isQueueRunning = false;
+      } else if (index < _currentQueueIndex) {
+        _currentQueueIndex -= 1;
+      } else if (isCurrent) {
+        _currentQueueIndex =
+            index >= _batchQueue.length ? _batchQueue.length - 1 : index;
+      }
+    });
+
+    if (_isQueueRunning) {
+      _tryStartQueue(context);
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(l10n.queueTaskRemoved(item.fileName))),
+    );
   }
 
   @override
@@ -748,31 +801,6 @@ class _HomePageState extends State<HomePage> {
                       );
                     },
                   ),
-                  CheckboxListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('Auto process extraction queue'),
-                    subtitle: const Text(
-                      'Run extraction continuously for selected files (max 3 attempts per file).',
-                    ),
-                    value: _autoProcessTranscription,
-                    onChanged: (value) {
-                      final bool next = value ?? false;
-                      setState(() {
-                        _autoProcessTranscription = next;
-                        if (_autoProcessTranscription && _batchQueue.isNotEmpty) {
-                          _isQueueRunning = true;
-                          if (_currentQueueIndex < 0) {
-                            _currentQueueIndex = 0;
-                          }
-                        } else if (!_autoProcessTranscription) {
-                          _isQueueRunning = false;
-                        }
-                      });
-                      widget.settingsService.setAutoProcessTranscription(next);
-                      _tryStartQueue(context);
-                    },
-                  ),
-
                   const SizedBox(height: 32),
 
                   // Step 3: Translation
@@ -921,40 +949,6 @@ class _HomePageState extends State<HomePage> {
                       );
                     },
                   ),
-                  CheckboxListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('Auto process translation queue'),
-                    subtitle: const Text(
-                      'Retry translation errors automatically and continue queue (max 3 attempts per file).',
-                    ),
-                    value: _autoProcessTranslation,
-                    onChanged: (value) {
-                      final bool next = value ?? false;
-                      setState(() {
-                        _autoProcessTranslation = next;
-                      });
-                      widget.settingsService.setAutoProcessTranslation(next);
-                    },
-                  ),
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: Text('Max retries per stage: $_maxStageAttempts'),
-                    subtitle: Slider(
-                      value: _maxStageAttempts.toDouble(),
-                      min: 1,
-                      max: 10,
-                      divisions: 9,
-                      label: '$_maxStageAttempts',
-                      onChanged: (value) {
-                        final int next = value.round();
-                        setState(() {
-                          _maxStageAttempts = next;
-                        });
-                        widget.settingsService.setBatchMaxRetries(next);
-                      },
-                    ),
-                  ),
-
                   const SizedBox(height: 32),
 
                   // Step 4: Preview & Export
@@ -999,6 +993,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildBatchQueuePanel(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -1006,14 +1001,14 @@ class _HomePageState extends State<HomePage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Batch Queue (${_batchQueue.length})',
+              l10n.batchQueueTitle(_batchQueue.length),
               style: Theme.of(context).textTheme.titleSmall?.copyWith(
                 fontWeight: FontWeight.w700,
               ),
             ),
             const SizedBox(height: 8),
             Text(
-              _isQueueRunning ? 'Running...' : 'Idle',
+              _isQueueRunning ? l10n.queueRunning : l10n.queueIdle,
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 color: _isQueueRunning
                     ? Colors.lightBlueAccent
@@ -1055,20 +1050,101 @@ class _HomePageState extends State<HomePage> {
                       ),
                     ),
                     subtitle: Text(
-                      '${_queueStageLabel(item.stage)} | E:${item.transcriptionAttempts}/$_maxStageAttempts T:${item.translationAttempts}/$_maxStageAttempts X:${item.exportAttempts}/$_maxStageAttempts'
+                      '${_queueStageLabel(item.stage, l10n)} | E:${item.transcriptionAttempts}/$_maxStageAttempts T:${item.translationAttempts}/$_maxStageAttempts X:${item.exportAttempts}/$_maxStageAttempts'
                       '${item.lastError == null ? '' : '\n${item.lastError}'}',
                       maxLines: 3,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                     trailing: isCurrent
-                        ? const Icon(
-                            Icons.play_arrow_rounded,
-                            color: Colors.lightBlueAccent,
-                            size: 18,
+                        ? Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(
+                                Icons.play_arrow_rounded,
+                                color: Colors.lightBlueAccent,
+                                size: 18,
+                              ),
+                              IconButton(
+                                tooltip: l10n.removeQueueTask,
+                                onPressed: () =>
+                                    _removeBatchQueueItem(context, index),
+                                icon: const Icon(
+                                  Icons.close_rounded,
+                                  size: 18,
+                                ),
+                              ),
+                            ],
                           )
-                        : null,
+                        : IconButton(
+                            tooltip: l10n.removeQueueTask,
+                            onPressed: () =>
+                                _removeBatchQueueItem(context, index),
+                            icon: const Icon(Icons.close_rounded, size: 18),
+                          ),
                   );
+                },
+              ),
+            ),
+            const SizedBox(height: 12),
+            Divider(height: 1, color: Colors.white.withValues(alpha: 0.08)),
+            const SizedBox(height: 8),
+            Text(
+              l10n.queueAutomationSettingsTitle,
+              style: Theme.of(
+                context,
+              ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+            ),
+            CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(l10n.autoProcessExtractionQueueTitle),
+              subtitle: Text(l10n.autoProcessExtractionQueueSubtitle),
+              value: _autoProcessTranscription,
+              onChanged: (value) {
+                final bool next = value ?? false;
+                setState(() {
+                  _autoProcessTranscription = next;
+                  if (_autoProcessTranscription && _batchQueue.isNotEmpty) {
+                    _isQueueRunning = true;
+                    if (_currentQueueIndex < 0) {
+                      _currentQueueIndex = 0;
+                    }
+                  } else if (!_autoProcessTranscription) {
+                    _isQueueRunning = false;
+                  }
+                });
+                widget.settingsService.setAutoProcessTranscription(next);
+                _tryStartQueue(context);
+              },
+            ),
+            CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(l10n.autoProcessTranslationQueueTitle),
+              subtitle: Text(l10n.autoProcessTranslationQueueSubtitle),
+              value: _autoProcessTranslation,
+              onChanged: (value) {
+                final bool next = value ?? false;
+                setState(() {
+                  _autoProcessTranslation = next;
+                });
+                widget.settingsService.setAutoProcessTranslation(next);
+              },
+            ),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(l10n.maxRetriesPerStage(_maxStageAttempts)),
+              subtitle: Slider(
+                value: _maxStageAttempts.toDouble(),
+                min: 1,
+                max: 10,
+                divisions: 9,
+                label: '$_maxStageAttempts',
+                onChanged: (value) {
+                  final int next = value.round();
+                  setState(() {
+                    _maxStageAttempts = next;
+                  });
+                  widget.settingsService.setBatchMaxRetries(next);
                 },
               ),
             ),
@@ -1078,28 +1154,28 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  String _queueStageLabel(_BatchQueueStage stage) {
+  String _queueStageLabel(_BatchQueueStage stage, AppLocalizations l10n) {
     switch (stage) {
       case _BatchQueueStage.pending:
-        return 'Pending';
+        return l10n.queueStagePending;
       case _BatchQueueStage.transcribing:
-        return 'Extracting';
+        return l10n.queueStageExtracting;
       case _BatchQueueStage.transcriptionFailed:
-        return 'Extract Failed';
+        return l10n.queueStageExtractFailed;
       case _BatchQueueStage.transcriptionDone:
-        return 'Extracted';
+        return l10n.queueStageExtracted;
       case _BatchQueueStage.translating:
-        return 'Translating';
+        return l10n.queueStageTranslating;
       case _BatchQueueStage.translationFailed:
-        return 'Translation Failed';
+        return l10n.queueStageTranslationFailed;
       case _BatchQueueStage.exporting:
-        return 'Exporting';
+        return l10n.queueStageExporting;
       case _BatchQueueStage.exportFailed:
-        return 'Export Failed';
+        return l10n.queueStageExportFailed;
       case _BatchQueueStage.completed:
-        return 'Completed';
+        return l10n.queueStageCompleted;
       case _BatchQueueStage.skipped:
-        return 'Skipped';
+        return l10n.queueStageSkipped;
     }
   }
 
@@ -1297,28 +1373,67 @@ class _HomePageState extends State<HomePage> {
       return;
     }
 
+    final Set<String> existingPaths = _batchQueue
+        .map((item) => item.videoPath)
+        .toSet();
+    final List<String> newPaths = paths
+        .where((path) => !existingPaths.contains(path))
+        .toList();
+    final int duplicateCount = paths.length - newPaths.length;
+
+    if (newPaths.isEmpty) {
+      final l10n = AppLocalizations.of(context)!;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(l10n.selectedFilesAlreadyInQueue)),
+      );
+      return;
+    }
+
+    final bool wasQueueEmpty = _batchQueue.isEmpty;
+    final bool wasQueueRunning = _isQueueRunning;
+
     setState(() {
-      _batchQueue
-        ..clear()
-        ..addAll(paths.map((path) => _BatchQueueItem(videoPath: path)));
-      _currentQueueIndex = _batchQueue.isEmpty ? -1 : 0;
-      _isQueueRunning = _autoProcessTranscription && _batchQueue.isNotEmpty;
+      _batchQueue.addAll(
+        newPaths.map((path) => _BatchQueueItem(videoPath: path)),
+      );
+
+      if (wasQueueEmpty) {
+        _currentQueueIndex = 0;
+      }
+
+      if (_autoProcessTranscription && !_isQueueRunning) {
+        _isQueueRunning = true;
+        final int pendingIndex = _batchQueue.indexWhere(
+          (item) => item.stage == _BatchQueueStage.pending,
+        );
+        if (pendingIndex >= 0) {
+          _currentQueueIndex = pendingIndex;
+        }
+      }
     });
 
-    context.read<TranscriptionBloc>().add(SelectVideo(paths.first));
-    context.read<TranslationBloc>().add(const ResetTranslation());
+    if (wasQueueEmpty) {
+      context.read<TranscriptionBloc>().add(SelectVideo(newPaths.first));
+      context.read<TranslationBloc>().add(const ResetTranslation());
+    }
 
     if (_isQueueRunning) {
       _tryStartQueue(context);
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Selected ${paths.length} file(s). Enable auto extraction to process queue.',
-          ),
-        ),
-      );
     }
+
+    final l10n = AppLocalizations.of(context)!;
+    final String message;
+    if (duplicateCount > 0) {
+      message = l10n.batchQueueAddedWithDuplicates(
+        newPaths.length,
+        duplicateCount,
+      );
+    } else {
+      message = wasQueueRunning
+          ? l10n.batchQueueAdded(newPaths.length)
+          : l10n.batchQueueAddedEnableAuto(newPaths.length);
+    }
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<bool> _ensureDownloadSourceSelected(BuildContext context) async {
